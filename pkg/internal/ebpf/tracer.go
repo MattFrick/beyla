@@ -95,7 +95,7 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 		return nil, fmt.Errorf("inspecting offsets: %w", err)
 	}
 
-	if goffsets != nil {
+	if goffsets != nil && !cfg.SkipGoSpecificTracers {
 		programs = filterNotFoundPrograms(programs, goffsets)
 		if len(programs) == 0 {
 			return nil, errors.New("no instrumentable function found")
