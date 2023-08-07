@@ -50,6 +50,8 @@ type TracerConfig struct {
 	// BpfBaseDir specifies the base directory where the BPF pinned maps will be mounted.
 	// By default, it will be /var/run/beyla
 	BpfBaseDir string `yaml:"bpf_fs_base_dir" env:"BPF_FS_BASE_DIR"`
+
+	SecNetEnabled bool `yaml:"sec_net_enabled" env:"SEC_NET_ENABLED"`
 }
 
 // Probe holds the information of the instrumentation points of a given function: its start and end offsets and

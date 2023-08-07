@@ -1,4 +1,4 @@
-package httpfltr
+package secnet
 
 import (
 	"bytes"
@@ -22,8 +22,8 @@ import (
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/imetrics"
 )
 
-//go:generate $BPF2GO -cc $BPF_CLANG -cflags $BPF_CFLAGS -target amd64,arm64 bpf ../../../../bpf/http_sock.c -- -I../../../../bpf/headers
-//go:generate $BPF2GO -cc $BPF_CLANG -cflags $BPF_CFLAGS -target amd64,arm64 bpf_debug ../../../../bpf/http_sock.c -- -I../../../../bpf/headers -DBPF_DEBUG
+//go:generate $BPF2GO -cc $BPF_CLANG -cflags $BPF_CFLAGS -target amd64,arm64 bpf ../../../../bpf/sec_net.c -- -I../../../../bpf/headers
+//go:generate $BPF2GO -cc $BPF_CLANG -cflags $BPF_CFLAGS -target amd64,arm64 bpf_debug ../../../../bpf/sec_net.c -- -I../../../../bpf/headers -DBPF_DEBUG
 
 var activePids, _ = lru.New[uint32, string](64)
 
@@ -47,7 +47,7 @@ type Tracer struct {
 }
 
 func logger() *slog.Logger {
-	return slog.With("component", "httpfltr.Tracer")
+	return slog.With("component", "secnet.Tracer")
 }
 
 func (p *Tracer) Load() (*ebpf.CollectionSpec, error) {
@@ -84,10 +84,6 @@ func (p *Tracer) AddCloser(c ...io.Closer) {
 }
 
 func (p *Tracer) GoProbes() map[string]ebpfcommon.FunctionPrograms {
-	return nil
-}
-
-func (p *Tracer) Tracepoints() map[string]ebpfcommon.FunctionPrograms {
 	return nil
 }
 
@@ -141,6 +137,10 @@ func (p *Tracer) KProbes() map[string]ebpfcommon.FunctionPrograms {
 	}
 
 	return kprobes
+}
+
+func (p *Tracer) Tracepoints() map[string]ebpfcommon.FunctionPrograms {
+	return nil
 }
 
 func (p *Tracer) UProbes() map[string]map[string]ebpfcommon.FunctionPrograms {

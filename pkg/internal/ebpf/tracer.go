@@ -26,6 +26,7 @@ import (
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/httpfltr"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/nethttp"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/secexec"
+	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/secnet"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/exec"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/goexec"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/imetrics"
@@ -110,6 +111,14 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 		} else {
 			programs = []Tracer{&httpfltr.Tracer{Cfg: cfg, Metrics: metrics}}
 		}
+	}
+
+	if cfg.SecNetEnabled {
+		log.Info("Sec Net enabled")
+		// programs = append(programs, &secnet.Tracer{Cfg: cfg, Metrics: metrics})
+
+		//TODO: For now, just clobber programs so we are the ONLY tracer.
+		programs = []Tracer{&secnet.Tracer{Cfg: cfg, Metrics: metrics}}
 	}
 
 	// Instead of the executable file in the disk, we pass the /proc/<pid>/exec
