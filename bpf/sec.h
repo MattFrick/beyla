@@ -9,6 +9,8 @@
 #define OP_EXECVE 1
 #define OP_EXECVEAT 2
 #define OP_EXIT 3
+#define OP_NET_SKT_ALLOC 64
+#define OP_NET_TCP_RCV_ESTAB 65
 
 #define CGRP_NAME_LEN 128
 #define EVENT_BUF_LEN 2048

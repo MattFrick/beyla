@@ -9,8 +9,12 @@
 #include "ringbuf.h"
 #include "sec_net.h"
 #include "sec_ssl.h"
+#include "sec.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
+
+// Force emitting struct sec_event_t into the ELF for automatic creation of Golang struct
+const sec_event_t *unused_sec_event __attribute__((unused));
 
 // Temporary tracking of accept arguments
 struct {
@@ -46,6 +50,23 @@ static __always_inline u32 valid_pid_sec(u64 id) {
     return pid;
 }
 
+
+static __always_inline sec_event_t *sec_net_event_create(u8 op) {
+    sec_event_t *event = bpf_ringbuf_reserve(&events, sizeof(sec_event_t), 0);
+    if (event) {
+        make_sec_meta(&event->meta);
+#if 1 //def DEBUG
+        print_sec_meta(&event->meta);
+#endif
+        event->meta.op = op;
+    }
+    return event;
+}
+
+static __always_inline void sec_net_event_send(sec_event_t *event) {
+    bpf_ringbuf_submit(event, get_flags());
+}
+
 // Used by accept to grab the sock details
 SEC("kretprobe/sock_alloc")
 int BPF_KRETPROBE(kretprobe_sock_alloc, struct socket *sock) {
@@ -54,9 +75,6 @@ int BPF_KRETPROBE(kretprobe_sock_alloc, struct socket *sock) {
     if (!valid_pid(id)) {
         return 0;
     }
-
-    bpf_dbg_printk("=== sock alloc %llx ===", id);
-
     u64 addr = (u64)sock;
 
     sock_args_t args = {};
@@ -68,7 +86,13 @@ int BPF_KRETPROBE(kretprobe_sock_alloc, struct socket *sock) {
     // we don't extract ->sock here, we remember the address of socket
     // and parse in sys_accept
     bpf_map_update_elem(&active_accept_args, &id, &args, BPF_ANY);
+    bpf_dbg_printk("=== sock alloc %llx ===", id);
 
+    sec_event_t *event = sec_net_event_create(OP_NET_SKT_ALLOC);
+    if (event) {
+        // TODO: Fill in more details, if possible
+        sec_net_event_send(event);
+    }
     return 0;
 }
 
@@ -98,7 +122,11 @@ int BPF_KPROBE(kprobe_tcp_rcv_established, struct sock *sk, struct sk_buff *skb)
         bpf_map_update_elem(&filtered_connections, &info, &meta, BPF_NOEXIST); // On purpose BPF_NOEXIST, we don't want to overwrite data by accept or connect
         bpf_map_update_elem(&pid_tid_to_conn, &id, &info, BPF_ANY); // to support SSL on missing handshake
     }
-
+    sec_event_t *event = sec_net_event_create(OP_NET_TCP_RCV_ESTAB);
+    if (event) {
+        // TODO: Fill in more details, if possible
+        sec_net_event_send(event);
+    }
     return 0;
 }
 
@@ -293,8 +321,8 @@ int socket__http_filter(struct __sk_buff *skb) {
                     return 0;
                 }
             }
+            bpf_dbg_printk("=== http_filter len=%d pid=%d %s ===", (skb->len - tcp.hdr_len), (meta != NULL) ? pid_from_pid_tgid(meta->id) : -1, buf);
         }
-        bpf_dbg_printk("=== http_filter len=%d pid=%d %s ===", (skb->len - tcp.hdr_len), (meta != NULL) ? pid_from_pid_tgid(meta->id) : -1, buf);
         //dbg_print_http_connection_info(&conn);
 
         process_http(&info, &tcp, packet_type, (skb->len - tcp.hdr_len), info.buf, meta);

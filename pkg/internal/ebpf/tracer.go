@@ -106,19 +106,15 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 	} else {
 		// We are not instrumenting a Go application, we override the programs
 		// list with the generic kernel/socket space filters
-		if security {
-			programs = []Tracer{&secexec.Tracer{Cfg: cfg, Metrics: metrics}}
-		} else {
-			programs = []Tracer{&httpfltr.Tracer{Cfg: cfg, Metrics: metrics}}
-		}
+		programs = []Tracer{&httpfltr.Tracer{Cfg: cfg, Metrics: metrics}}
 	}
 
-	if cfg.SecNetEnabled {
-		log.Info("Sec Net enabled")
-		// programs = append(programs, &secnet.Tracer{Cfg: cfg, Metrics: metrics})
-
-		//TODO: For now, just clobber programs so we are the ONLY tracer.
-		programs = []Tracer{&secnet.Tracer{Cfg: cfg, Metrics: metrics}}
+	if security {
+		// For now, just replace everything with only security programs
+		programs = []Tracer{
+			&secexec.Tracer{Cfg: cfg, Metrics: metrics},
+			&secnet.Tracer{Cfg: cfg, Metrics: metrics},
+		}
 	}
 
 	// Instead of the executable file in the disk, we pass the /proc/<pid>/exec
@@ -139,6 +135,7 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 	if cfg.SystemWide {
 		log.Info("system wide instrumentation")
 	}
+
 	return &ProcessTracer{
 		programs: programs,
 		ELFInfo:  elfInfo,

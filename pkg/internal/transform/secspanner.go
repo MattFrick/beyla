@@ -7,6 +7,7 @@ import (
 	"github.com/gavv/monotime"
 
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/secexec"
+	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/secnet"
 )
 
 type SecurityEvent struct {
@@ -40,6 +41,8 @@ func ReadSecurityEvent(in <-chan []interface{}, out chan<- []SecurityEvent) {
 			switch t := v.(type) {
 			case secexec.BPFSecEvent:
 				spans = append(spans, toSecEvent(&t))
+			case secnet.BPFSecEvent:
+				spans = append(spans, toSecEventSecNet(&t))
 			}
 		}
 		out <- spans
@@ -63,6 +66,10 @@ func opName(op uint8) string {
 		return "OP_EXECVEAT"
 	case 3:
 		return "OP_PROG_EXIT"
+	case 64:
+		return "OP_NET_SKT_ALLOC"
+	case 65:
+		return "OP_NET_TCP_RCV_ESTAB"
 	}
 
 	return "OP_UNKNOWN"
@@ -92,6 +99,36 @@ func toSecEvent(e *secexec.BPFSecEvent) SecurityEvent {
 		CgrpName: cStrToString(e.Meta.CgrpName[:]),
 		Comm:     cStrToString(e.Meta.Comm[:]),
 		Filename: cStrToString(e.Filename[:]),
+		Buf:      cStrToString(e.Buf[:]),
+	}
+
+	return r
+}
+
+// TODO: Figure out how to share event type between secexec and secnet so there's just one of these functions:
+func toSecEventSecNet(e *secnet.BPFSecEvent) SecurityEvent {
+	now := time.Now()
+	monoNow := monotime.Now()
+	tsDelta := monoNow - time.Duration(e.Meta.TimeNs)
+
+	r := SecurityEvent{
+		Op:       opName(e.Meta.Op),
+		Pid:      e.Meta.Pid,
+		Tid:      e.Meta.Tid,
+		Ppid:     e.Meta.Ppid,
+		UID:      e.Meta.Uid,
+		Auid:     e.Meta.Auid,
+		NsPid:    e.Meta.NsPid,
+		NsPpid:   e.Meta.NsPpid,
+		PidNsID:  e.Meta.PidNsId,
+		EventTS:  now.Add(-tsDelta),
+		CapEff:   e.Meta.CapEff,
+		CapInh:   e.Meta.CapInh,
+		CapPerm:  e.Meta.CapPerm,
+		CgrpID:   e.Meta.CgrpId,
+		NetNs:    e.Meta.NetNs,
+		CgrpName: cStrToString(e.Meta.CgrpName[:]),
+		Comm:     cStrToString(e.Meta.Comm[:]),
 		Buf:      cStrToString(e.Buf[:]),
 	}
 

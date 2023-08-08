@@ -5,15 +5,9 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
-	"net"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/ringbuf"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"golang.org/x/exp/slog"
 
 	ebpfcommon "github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/common"
@@ -22,13 +16,16 @@ import (
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/imetrics"
 )
 
-//go:generate $BPF2GO -cc $BPF_CLANG -cflags $BPF_CFLAGS -target amd64,arm64 bpf ../../../../bpf/sec_net.c -- -I../../../../bpf/headers
-//go:generate $BPF2GO -cc $BPF_CLANG -cflags $BPF_CFLAGS -target amd64,arm64 bpf_debug ../../../../bpf/sec_net.c -- -I../../../../bpf/headers -DBPF_DEBUG
+//go:generate $BPF2GO -cc $BPF_CLANG -cflags $BPF_CFLAGS -type sec_event -target amd64,arm64 bpf ../../../../bpf/sec_net.c -- -I../../../../bpf/headers
+//go:generate $BPF2GO -cc $BPF_CLANG -cflags $BPF_CFLAGS -type sec_event -target amd64,arm64 bpf_debug ../../../../bpf/sec_net.c -- -I../../../../bpf/headers -DBPF_DEBUG
 
+/* TODO: cleanup, not needed for first pass of toRequestTrace getting replaced with toSecEvent
 var activePids, _ = lru.New[uint32, string](64)
+*/
 
 type BPFHTTPInfo bpfHttpInfoT
 type BPFConnInfo bpfConnectionInfoT
+type BPFSecEvent bpfSecEvent
 
 type HTTPInfo struct {
 	BPFHTTPInfo
@@ -206,12 +203,24 @@ func (p *Tracer) SocketFilters() []*ebpf.Program {
 
 func (p *Tracer) Run(ctx context.Context, eventsChan chan<- []any) {
 	ebpfcommon.ForwardRingbuf(
-		p.Cfg, logger(), p.bpfObjects.Events, p.toRequestTrace,
+		p.Cfg, logger(), p.bpfObjects.Events, p.toSecEvent,
 		p.Metrics,
 		append(p.closers, &p.bpfObjects)...,
 	)(ctx, eventsChan)
 }
 
+func (p *Tracer) toSecEvent(record *ringbuf.Record) (any, error) {
+	var event BPFSecEvent
+
+	err := binary.Read(bytes.NewBuffer(record.RawSample), binary.LittleEndian, &event)
+	if err != nil {
+		return event, err
+	}
+
+	return event, nil
+}
+
+/* TODO: This has been replaced with toSecEvent, migrate these things into the new function.
 func (p *Tracer) toRequestTrace(record *ringbuf.Record) (any, error) {
 	var event BPFHTTPInfo
 	var result HTTPInfo
@@ -245,6 +254,7 @@ func (p *Tracer) toRequestTrace(record *ringbuf.Record) (any, error) {
 
 	return result, nil
 }
+
 
 func (event *BPFHTTPInfo) url() string {
 	buf := string(event.Buf[:])
@@ -346,3 +356,4 @@ func (p *Tracer) serviceName(pid uint32) string {
 	activePids.Add(pid, name)
 	return name
 }
+*/
