@@ -13,17 +13,7 @@ char __license[] SEC("license") = "Dual MIT/GPL";
 #define MAX_CONCURRENT_REQUESTS 10000
 
 // Force emitting struct sec_event_t into the ELF for automatic creation of Golang struct
-const sec_event_t *unused __attribute__((unused));
-
-#if defined(__TARGET_ARCH_arm64)
-// Copied from Linux include/uapi/asm/ptrace.h to make ARM64 happy
-struct user_pt_regs {
-	u64		regs[31];
-	u64		sp;
-	u64		pc;
-	u64		pstate;
-};
-#endif
+const sec_event_t *unused_sec_event __attribute__((unused));
 
 // Track PID to executable on exec, so we can report the command on exit
 struct {

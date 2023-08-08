@@ -2,6 +2,8 @@ package transform
 
 import (
 	"bytes"
+	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/gavv/monotime"
@@ -70,6 +72,12 @@ func opName(op uint8) string {
 		return "OP_NET_SKT_ALLOC"
 	case 65:
 		return "OP_NET_TCP_RCV_ESTAB"
+	case 66:
+		return "OP_NET_SYS_ACCEPT"
+	case 67:
+		return "OP_NET_TCP_CONNECT"
+	case 68:
+		return "OP_NET_SYS_CONNECT"
 	}
 
 	return "OP_UNKNOWN"
@@ -110,6 +118,15 @@ func toSecEventSecNet(e *secnet.BPFSecEvent) SecurityEvent {
 	now := time.Now()
 	monoNow := monotime.Now()
 	tsDelta := monoNow - time.Duration(e.Meta.TimeNs)
+	/*type bpfConnectionInfoT struct {
+		S_addr [16]uint8
+		D_addr [16]uint8
+		S_port uint16
+		D_port uint16
+	}*/
+
+	bufStr := netip.AddrFrom16(e.ConnInfo.S_addr).String() + ":" + strconv.Itoa(int(e.ConnInfo.S_port)) + " to " +
+		netip.AddrFrom16(e.ConnInfo.D_addr).String() + ":" + strconv.Itoa(int(e.ConnInfo.D_port))
 
 	r := SecurityEvent{
 		Op:       opName(e.Meta.Op),
@@ -129,7 +146,7 @@ func toSecEventSecNet(e *secnet.BPFSecEvent) SecurityEvent {
 		NetNs:    e.Meta.NetNs,
 		CgrpName: cStrToString(e.Meta.CgrpName[:]),
 		Comm:     cStrToString(e.Meta.Comm[:]),
-		Buf:      cStrToString(e.Buf[:]),
+		Buf:      bufStr,
 	}
 
 	return r

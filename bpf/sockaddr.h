@@ -27,7 +27,7 @@ static __always_inline bool parse_sock_info(struct sock *s, connection_info_t *i
         BPF_CORE_READ_INTO(&info->d_port, s, __sk_common.skc_dport);
         info->d_port = bpf_ntohs(info->d_port);
         BPF_CORE_READ_INTO(&ip4_d_l, s, __sk_common.skc_daddr);
-
+ 
         __builtin_memcpy(info->s_addr, ip4ip6_prefix, sizeof(ip4ip6_prefix));
         __builtin_memcpy(info->d_addr, ip4ip6_prefix, sizeof(ip4ip6_prefix));
         __builtin_memcpy(info->s_addr + sizeof(ip4ip6_prefix), &ip4_s_l, sizeof(ip4_s_l));

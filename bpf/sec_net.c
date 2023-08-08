@@ -55,10 +55,8 @@ static __always_inline sec_event_t *sec_net_event_create(u8 op) {
     sec_event_t *event = bpf_ringbuf_reserve(&events, sizeof(sec_event_t), 0);
     if (event) {
         make_sec_meta(&event->meta);
-#if 1 //def DEBUG
-        print_sec_meta(&event->meta);
-#endif
         event->meta.op = op;
+        //print_sec_meta(&event->meta);
     }
     return event;
 }
@@ -87,12 +85,13 @@ int BPF_KRETPROBE(kretprobe_sock_alloc, struct socket *sock) {
     // and parse in sys_accept
     bpf_map_update_elem(&active_accept_args, &id, &args, BPF_ANY);
     bpf_dbg_printk("=== sock alloc %llx ===", id);
-
+#if 0 // temp
     sec_event_t *event = sec_net_event_create(OP_NET_SKT_ALLOC);
     if (event) {
         // TODO: Fill in more details, if possible
         sec_net_event_send(event);
     }
+#endif
     return 0;
 }
 
@@ -122,11 +121,13 @@ int BPF_KPROBE(kprobe_tcp_rcv_established, struct sock *sk, struct sk_buff *skb)
         bpf_map_update_elem(&filtered_connections, &info, &meta, BPF_NOEXIST); // On purpose BPF_NOEXIST, we don't want to overwrite data by accept or connect
         bpf_map_update_elem(&pid_tid_to_conn, &id, &info, BPF_ANY); // to support SSL on missing handshake
     }
+#if 0   // Temp
     sec_event_t *event = sec_net_event_create(OP_NET_TCP_RCV_ESTAB);
     if (event) {
-        // TODO: Fill in more details, if possible
+        event->conn_info = info;
         sec_net_event_send(event);
     }
+#endif
     return 0;
 }
 
@@ -174,6 +175,14 @@ int BPF_KRETPROBE(kretprobe_sys_accept4, uint fd)
         bpf_map_update_elem(&pid_tid_to_conn, &id, &info, BPF_ANY); // to support SSL on missing handshake
     }
 
+#if TODO_REENABLE_THIS_CODE_TEMP_DISABLED
+    sec_event_t *event = sec_net_event_create(OP_NET_SYS_ACCEPT);
+    if (event) {
+        event->conn_info = info;
+        sec_net_event_send(event);
+    }
+#endif
+
 cleanup:
     bpf_map_delete_elem(&active_accept_args, &id);
     return 0;
@@ -198,6 +207,13 @@ int BPF_KPROBE(kprobe_tcp_connect, struct sock *sk) {
     args.accept_time = bpf_ktime_get_ns();
 
     bpf_map_update_elem(&active_connect_args, &id, &args, BPF_ANY);
+#if TODO_REENABLE_THIS_CODE_TEMP_DISABLED
+    sec_event_t *event = sec_net_event_create(OP_NET_TCP_CONNECT);
+    if (event) {
+        //event->conn_info = info;
+        sec_net_event_send(event);
+    }
+#endif
 
     return 0;
 }
@@ -238,6 +254,12 @@ int BPF_KRETPROBE(kretprobe_sys_connect, int fd)
         meta.id = id;
         meta.type = EVENT_HTTP_CLIENT;
         bpf_map_update_elem(&filtered_connections, &info, &meta, BPF_ANY); // On purpose BPF_ANY, we want to overwrite stale
+    }
+
+    sec_event_t *event = sec_net_event_create(OP_NET_SYS_CONNECT);
+    if (event) {
+        //event->conn_info = info;
+        sec_net_event_send(event);
     }
 
 cleanup:

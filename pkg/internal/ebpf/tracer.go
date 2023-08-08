@@ -25,7 +25,6 @@ import (
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/grpc"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/httpfltr"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/nethttp"
-	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/secexec"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/ebpf/secnet"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/exec"
 	"github.com/grafana/ebpf-autoinstrument/pkg/internal/goexec"
@@ -112,7 +111,7 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 	if security {
 		// For now, just replace everything with only security programs
 		programs = []Tracer{
-			&secexec.Tracer{Cfg: cfg, Metrics: metrics},
+			//&secexec.Tracer{Cfg: cfg, Metrics: metrics},
 			&secnet.Tracer{Cfg: cfg, Metrics: metrics},
 		}
 	}
