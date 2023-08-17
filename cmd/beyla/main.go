@@ -57,10 +57,18 @@ func main() {
 		slog.Error("Beyla couldn't find target service", err)
 		os.Exit(-1)
 	}
-	if err := instr.ReadAndForward(ctx); err != nil {
+
+	pipeline, err := instr.BuildPipeline(ctx)
+	if err != nil {
 		slog.Error("Beyla couldn't start read and forwarding", err)
 		os.Exit(-1)
 	}
+
+	// Main loop:
+	for !pipeline.AllDone(ctx) {
+		time.Sleep(time.Millisecond * 10)
+	}
+	slog.Info("exiting auto-instrumenter")
 
 	if gc := os.Getenv("GOCOVERDIR"); gc != "" {
 		slog.Info("Waiting 1s to collect coverage data...")

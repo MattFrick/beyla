@@ -118,9 +118,19 @@ type Instrumenter struct {
 	graph           *graph.Graph
 }
 
-func (i *Instrumenter) Run(ctx context.Context) {
+func (i *Instrumenter) Start(ctx context.Context) {
 	go i.internalMetrics.Start(ctx)
+	i.graph.Start(ctx)
+}
+
+// TODO: Remove this function:
+func (i *Instrumenter) RunSync(ctx context.Context) {
+	i.Start(ctx)
 	i.graph.Run(ctx)
+}
+
+func (i *Instrumenter) AllDone(ctx context.Context) bool {
+	return i.graph.AllDone(ctx)
 }
 
 // behind this line, adaptors to instantiate the different pipeline nodes according to the expected signature format

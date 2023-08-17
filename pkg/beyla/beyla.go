@@ -73,6 +73,22 @@ func (i *Instrumenter) FindTarget(ctx context.Context) error {
 	return nil
 }
 
+func (i *Instrumenter) BuildPipeline(ctx context.Context) (*pipe.Instrumenter, error) {
+	log := log()
+	// TODO: when we split the executable, tracer should be reconstructed somehow
+	// from this instance
+	bp, err := pipe.Build(ctx, i.config, i.ctxInfo, i.tracer)
+	if err != nil {
+		return nil, fmt.Errorf("can't instantiate instrumentation pipeline: %w", err)
+	}
+
+	log.Info("Starting main node")
+
+	bp.Start(ctx)
+
+	return bp, nil
+}
+
 // ReadAndForward keeps listening for traces in the BPF map, then reads,
 // processes and forwards them
 func (i *Instrumenter) ReadAndForward(ctx context.Context) error {
@@ -86,7 +102,7 @@ func (i *Instrumenter) ReadAndForward(ctx context.Context) error {
 
 	log.Info("Starting main node")
 
-	bp.Run(ctx)
+	bp.RunSync(ctx)
 
 	log.Info("exiting auto-instrumenter")
 
