@@ -30,14 +30,16 @@ type Instrumenter struct {
 	ctxInfo *global.ContextInfo
 	// TODO: before splitting the executable, tracer interface passed here should have
 	// restricted functionality: just read and forward data from already mounted BPF maps
-	tracer *ebpf.ProcessTracer
+	tracerChan chan *ebpf.ProcessTracer
+	tracer     *ebpf.ProcessTracer // TEMP: handing off from process-finding to main loop using this old way
 }
 
 // New Instrumenter, given a Config
 func New(config *Config) *Instrumenter {
 	return &Instrumenter{
-		config:  (*pipe.Config)(config),
-		ctxInfo: buildContextInfo((*pipe.Config)(config)),
+		config:     (*pipe.Config)(config),
+		ctxInfo:    buildContextInfo((*pipe.Config)(config)),
+		tracerChan: make(chan *ebpf.ProcessTracer),
 	}
 }
 
@@ -55,22 +57,41 @@ func LoadConfig(reader io.Reader) (*Config, error) {
 	return (*Config)(cfg), nil
 }
 
-// FindTarget finds the target executable or service and instruments it. In addition
-// it mounts the required BPF maps to be used by ReadAndForward
-func (i *Instrumenter) FindTarget(ctx context.Context) error {
-	log().Info("creating instrumentation pipeline")
-	var err error
-	i.tracer, err = ebpf.FindAndInstrument(ctx, &i.config.EBPF, i.ctxInfo.Metrics)
+// FindTargetAsync finds the target executable or service and sends tracer to outChan
+func (i *Instrumenter) FindTargetAsync(ctx context.Context) error {
+	//	log().Info("creating instrumentation pipeline")
+	tracer, err := ebpf.FindProcessesAsync(ctx, &i.config.EBPF, i.ctxInfo.Metrics)
 	if err != nil {
 		return fmt.Errorf("can't find an instrument executable: %w", err)
+	}
+	if tracer == nil {
+		return nil
 	}
 	// If system-wide tracing is set, we don't use the initially-found
 	// executable name as service name, as it might be anything.
 	// We'll use the service name as traced from eBPF
 	if i.ctxInfo.ServiceName == "" && !i.config.EBPF.SystemWide {
-		i.ctxInfo.ServiceName = i.tracer.ELFInfo.ExecutableName()
+		i.ctxInfo.ServiceName = tracer.ELFInfo.ExecutableName()
 	}
+	i.tracerChan <- tracer
 	return nil
+}
+
+func (i *Instrumenter) UpdateInstrumentation(ctx context.Context) (bool, error) {
+	var err error = nil
+	var handledEvent bool = false
+	select {
+	case pt := <-i.tracerChan:
+		fmt.Println("UpdateInstrumentation Spewing pt:")
+		spew.Dump(pt)
+		i.tracer = pt
+		err = pt.Install(&i.config.EBPF, ctx)
+		if err == nil {
+			handledEvent = true
+		}
+	default:
+	}
+	return handledEvent, err
 }
 
 func (i *Instrumenter) BuildPipeline(ctx context.Context) (*pipe.Instrumenter, error) {

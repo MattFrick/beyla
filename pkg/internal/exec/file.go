@@ -170,3 +170,52 @@ func FindExecELF(ctx context.Context, finder ProcessFinder) ([]FileInfo, error) 
 	}
 	// TODO: return error after X attempts?
 }
+
+// FindExecELFAsync operation returns executable, if available.
+// TODO: check that all the existing instances of the excutable are instrumented, even when it is offloaded from memory
+func FindExecELFAsync(ctx context.Context, finder ProcessFinder) ([]FileInfo, error) {
+	var fileInfos []FileInfo
+	for {
+		log().Debug("searching for process executable")
+		processes, ok := finder()
+		if !ok {
+			select {
+			case <-ctx.Done():
+				log().Debug("context was cancelled before finding the process. Exiting")
+				return []FileInfo{}, errors.New("process not found")
+			default:
+				log().Debug("no processes found.")
+				return nil, nil
+			}
+			continue
+		}
+		for _, p := range processes {
+			exePath, err := p.Exe()
+			if err != nil {
+				// this might happen if you query from the port a service that does not have executable path.
+				// Since this value is just for attributing, we set a default placeholder
+				exePath = "unknown"
+			}
+
+			ppid, _ := p.Ppid()
+
+			// In container environments or K8s, we can't just open the executable exe path, because it might
+			// be in the volume of another pod/container. We need to access it through the /proc/<pid>/exe symbolic link
+			file := FileInfo{
+				CmdExePath: exePath,
+				// TODO: allow overriding /proc root folder
+				ProExeLinkPath: fmt.Sprintf("/proc/%d/exe", p.Pid),
+				Pid:            p.Pid,
+				Ppid:           ppid,
+			}
+			file.ELF, err = elf.Open(file.ProExeLinkPath)
+			if err != nil {
+				return fileInfos, fmt.Errorf("can't open ELF executable file %q: %w", exePath, err)
+			}
+			fileInfos = append(fileInfos, file)
+		}
+
+		return fileInfos, nil
+	}
+	// TODO: return error after X attempts?
+}

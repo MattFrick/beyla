@@ -53,9 +53,25 @@ func main() {
 	// 1st executable - Invoke FindTarget, which also mounts the BPF maps
 	// 2nd executable - Invoke ReadAndForward, receiving the BPF map mountpoint as argument
 	instr := beyla.New(config)
-	if err := instr.FindTarget(ctx); err != nil {
-		slog.Error("Beyla couldn't find target service", err)
-		os.Exit(-1)
+
+	// TODO: cleanup on exit? Any other issues?
+	go func() {
+		for {
+			slog.Info("Starting check(s) for target processes")
+			if err := instr.FindTargetAsync(ctx); err != nil {
+				slog.Error("Beyla couldn't find target service", err)
+				os.Exit(-1)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}()
+
+	for {
+		if updated, err := instr.UpdateInstrumentation(ctx); updated && err == nil {
+			slog.Info("Found first process to instrument, exiting async process discovery loop")
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	pipeline, err := instr.BuildPipeline(ctx)

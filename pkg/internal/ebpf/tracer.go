@@ -76,9 +76,20 @@ func TracerProvider(_ context.Context, pt *ProcessTracer) ([]node.StartFuncCtx[[
 	return pt.TraceReaders()
 }
 
-func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metrics imetrics.Reporter) (*ProcessTracer, error) {
-	var log = logger()
+func TracerSystemSetup(cfg *ebpfcommon.TracerConfig) error {
+	if err := rlimit.RemoveMemlock(); err != nil {
+		return fmt.Errorf("removing memory lock: %w", err)
+	}
 
+	pinPath := getBpfPinPath(cfg)
+	_, err := mountBpfPinPath(pinPath)
+	if err != nil {
+		return fmt.Errorf("mounting BPF FS in %q: %w", pinPath, err)
+	}
+	return nil
+}
+
+func FindProcessesAsync(ctx context.Context, cfg *ebpfcommon.TracerConfig, metrics imetrics.Reporter) (*ProcessTracer, error) {
 	// Each program is an eBPF source: net/http, grpc...
 	programs := []Tracer{
 		&nethttp.Tracer{Cfg: cfg, Metrics: metrics},
@@ -93,6 +104,9 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 	elfInfo, goffsets, err := inspect(ctx, cfg, allFuncs)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting offsets: %w", err)
+	}
+	if elfInfo == nil {
+		return nil, nil
 	}
 
 	if goffsets != nil {
@@ -112,14 +126,53 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 	if err != nil {
 		return nil, fmt.Errorf("opening %q executable file: %w", elfInfo.ProExeLinkPath, err)
 	}
-	if err := rlimit.RemoveMemlock(); err != nil {
-		return nil, fmt.Errorf("removing memory lock: %w", err)
+
+	return &ProcessTracer{
+		programs: programs,
+		ELFInfo:  elfInfo,
+		goffsets: goffsets,
+		exe:      exe,
+		pinPath:  getBpfPinPath(cfg),
+	}, nil
+}
+
+func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metrics imetrics.Reporter) (*ProcessTracer, error) {
+	var log = logger()
+
+	// Each program is an eBPF source: net/http, grpc...
+	programs := []Tracer{
+		&nethttp.Tracer{Cfg: cfg, Metrics: metrics},
+		&nethttp.GinTracer{Tracer: nethttp.Tracer{Cfg: cfg, Metrics: metrics}},
+		&grpc.Tracer{Cfg: cfg, Metrics: metrics},
+		&goruntime.Tracer{Cfg: cfg, Metrics: metrics},
 	}
 
-	pinPath, err := mountBpfPinPath(cfg)
+	// merging all the functions from all the programs, in order to do
+	// a complete inspection of the target executable
+	allFuncs := allGoFunctionNames(programs)
+	elfInfo, goffsets, err := inspect(ctx, cfg, allFuncs)
 	if err != nil {
-		return nil, fmt.Errorf("mounting BPF FS in %q: %w", cfg.BpfBaseDir, err)
+		return nil, fmt.Errorf("inspecting offsets: %w", err)
 	}
+
+	if goffsets != nil && false { // MSF: TEMP HACK
+		programs = filterNotFoundPrograms(programs, goffsets)
+		if len(programs) == 0 {
+			return nil, errors.New("no instrumentable function found")
+		}
+	} else {
+		// We are not instrumenting a Go application, we override the programs
+		// list with the generic kernel/socket space filters
+		programs = []Tracer{&httpfltr.Tracer{Cfg: cfg, Metrics: metrics}}
+	}
+
+	// Instead of the executable file in the disk, we pass the /proc/<pid>/exec
+	// to allow loading it from different container/pods in containerized environments
+	exe, err := link.OpenExecutable(elfInfo.ProExeLinkPath)
+	if err != nil {
+		return nil, fmt.Errorf("opening %q executable file: %w", elfInfo.ProExeLinkPath, err)
+	}
+	TracerSystemSetup(cfg)
 
 	if cfg.SystemWide {
 		log.Info("system wide instrumentation")
@@ -129,31 +182,28 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 		ELFInfo:  elfInfo,
 		goffsets: goffsets,
 		exe:      exe,
-		pinPath:  pinPath,
+		pinPath:  getBpfPinPath(cfg),
 	}, nil
 }
 
-// TraceReaders returns one StartFuncCtx for each discovered eBPF traceable source: GRPC, HTTP...
-func (pt *ProcessTracer) TraceReaders() ([]node.StartFuncCtx[[]any], error) {
+// returns one StartFuncCtx for each discovered eBPF traceable source: GRPC, HTTP...
+func (pt *ProcessTracer) Install(cfg *ebpfcommon.TracerConfig, ctx context.Context) error {
 	var log = logger()
+	log.Info("Process Tracer Install")
 
-	// startNodes contains the eBPF programs (HTTP, GRPC tracers...) plus a function
-	// that just waits for the passed context to finish before closing the BPF pin
-	// path
-	startNodes := []node.StartFuncCtx[[]any]{
-		waitToCloseBbfPinPath(pt.pinPath),
-	}
+	// TODO: Only do this once:
+	TracerSystemSetup(cfg)
 
 	for _, p := range pt.programs {
 		plog := log.With("program", reflect.TypeOf(p))
-		plog.Debug("loading eBPF program")
+		plog.Info("loading eBPF program") // MSF: Change back to debug
 		spec, err := p.Load()
 		if err != nil {
 			unmountBpfPinPath(pt.pinPath)
-			return nil, fmt.Errorf("loading eBPF program: %w", err)
+			return fmt.Errorf("loading eBPF program: %w", err)
 		}
 		if err := spec.RewriteConstants(p.Constants(pt.ELFInfo, pt.goffsets)); err != nil {
-			return nil, fmt.Errorf("rewriting BPF constants definition: %w", err)
+			return fmt.Errorf("rewriting BPF constants definition: %w", err)
 		}
 		if err := spec.LoadAndAssign(p.BpfObjects(), &ebpf.CollectionOptions{
 			Maps: ebpf.MapOptions{
@@ -161,7 +211,7 @@ func (pt *ProcessTracer) TraceReaders() ([]node.StartFuncCtx[[]any], error) {
 			}}); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, fmt.Errorf("loading and assigning BPF objects: %w", err)
+			return fmt.Errorf("loading and assigning BPF objects: %w", err)
 		}
 		i := instrumenter{
 			exe:     pt.exe,
@@ -172,38 +222,60 @@ func (pt *ProcessTracer) TraceReaders() ([]node.StartFuncCtx[[]any], error) {
 		if err := i.goprobes(p); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, err
+			return err
 		}
 
 		//Kprobes to be used for native instrumentation points
 		if err := i.kprobes(p); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, err
+			return err
 		}
 
 		//Uprobes to be used for native module instrumentation points
 		if err := i.uprobes(pt.ELFInfo.Pid, p); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, err
+			return err
 		}
 
 		//Sock filters support
 		if err := i.sockfilters(p); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, err
+			return err
 		}
+	}
 
+	return nil
+}
+
+// TraceReaders returns one StartFuncCtx for each discovered eBPF traceable source: GRPC, HTTP...
+func (pt *ProcessTracer) TraceReaders() ([]node.StartFuncCtx[[]any], error) {
+	var log = logger()
+	log.Info("Adding trace readers")
+
+	// startNodes contains the eBPF programs (HTTP, GRPC tracers...) plus a function
+	// that just waits for the passed context to finish before closing the BPF pin
+	// path
+	startNodes := []node.StartFuncCtx[[]any]{
+		waitToCloseBbfPinPath(pt.pinPath),
+	}
+
+	for _, p := range pt.programs {
+		plog := log.With("program", reflect.TypeOf(p))
+		plog.Info("appending program's run function to tracereader")
 		startNodes = append(startNodes, p.Run)
 	}
 
 	return startNodes, nil
 }
 
-func mountBpfPinPath(cfg *ebpfcommon.TracerConfig) (string, error) {
-	pinPath := path.Join(cfg.BpfBaseDir, strconv.Itoa(os.Getpid()))
+func getBpfPinPath(cfg *ebpfcommon.TracerConfig) string {
+	return path.Join(cfg.BpfBaseDir, strconv.Itoa(os.Getpid()))
+}
+
+func mountBpfPinPath(pinPath string) (string, error) {
 	log := slog.With("component", "ebpf.TracerProvider", "path", pinPath)
 	log.Debug("mounting BPF map pinning path")
 	if _, err := os.Stat(pinPath); err != nil {
@@ -312,12 +384,15 @@ func inspect(ctx context.Context, cfg *ebpfcommon.TracerConfig, functions []stri
 func inspectByPort(ctx context.Context, cfg *ebpfcommon.TracerConfig, functions []string) (*exec.FileInfo, *goexec.Offsets, error) {
 	finder := exec.OwnedPort(cfg.Port)
 
-	elfs, err := exec.FindExecELF(ctx, finder)
+	elfs, err := exec.FindExecELFAsync(ctx, finder)
 	for _, exec := range elfs {
 		defer exec.ELF.Close()
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("looking for executable ELF: %w", err)
+	}
+	if elfs == nil {
+		return nil, nil, nil
 	}
 
 	pidMap := map[int32]exec.FileInfo{}
