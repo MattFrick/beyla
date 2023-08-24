@@ -53,10 +53,30 @@ func main() {
 	// 1st executable - Invoke FindTarget, which also mounts the BPF maps
 	// 2nd executable - Invoke ReadAndForward, receiving the BPF map mountpoint as argument
 	instr := beyla.New(config)
-	if err := instr.FindTarget(ctx); err != nil {
-		slog.Error("Beyla couldn't find target service", err)
-		os.Exit(-1)
+
+	go func() {
+		slog.Info("Starting check(s) for target processes")
+		if err := instr.FindTargets(ctx); err != nil {
+			slog.Error("Beyla couldn't find target service", err)
+			os.Exit(-1)
+		}
+	}()
+
+	// Syncronous update for first one, so that instr.tracer is populated before pipe setup
+	if err := instr.UpdateInstrumentation(); err != nil {
+		slog.Error("Error in UpdateInstrumentation", err)
+		return
 	}
+
+	go func() {
+		for {
+			if err := instr.UpdateInstrumentation(); err != nil {
+				slog.Error("Error in UpdateInstrumentation", err)
+				return
+			}
+		}
+	}()
+
 	if err := instr.ReadAndForward(ctx); err != nil {
 		slog.Error("Beyla couldn't start read and forwarding", err)
 		os.Exit(-1)

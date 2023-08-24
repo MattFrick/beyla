@@ -71,14 +71,33 @@ type ProcessTracer struct {
 	pinPath  string
 }
 
+// TODO: Replace these with better mechanisms:
+var httpFltrInstalled bool
+var systemSetupInstalled bool
+
 // TracerProvider returns a StartFuncCtx for each discovered eBPF traceable source: GRPC, HTTP...
 func TracerProvider(_ context.Context, pt *ProcessTracer) ([]node.StartFuncCtx[[]any], error) {
 	return pt.TraceReaders()
 }
 
-func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metrics imetrics.Reporter) (*ProcessTracer, error) {
-	var log = logger()
+func TracerSystemSetup(cfg *ebpfcommon.TracerConfig) error {
+	if systemSetupInstalled {
+		return nil
+	}
+	slog.Debug("Removing memlock")
+	if err := rlimit.RemoveMemlock(); err != nil {
+		return fmt.Errorf("removing memory lock: %w", err)
+	}
 
+	pinPath := getBpfPinPath(cfg)
+	if err := mountBpfPinPath(pinPath); err != nil {
+		return fmt.Errorf("mounting BPF FS in %q: %w", pinPath, err)
+	}
+	systemSetupInstalled = true
+	return nil
+}
+
+func FindProcesses(cfg *ebpfcommon.TracerConfig, metrics imetrics.Reporter, installedPids map[int32]bool) (*ProcessTracer, error) {
 	// Each program is an eBPF source: net/http, grpc...
 	programs := []Tracer{
 		&nethttp.Tracer{Cfg: cfg, Metrics: metrics},
@@ -90,9 +109,12 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 	// merging all the functions from all the programs, in order to do
 	// a complete inspection of the target executable
 	allFuncs := allGoFunctionNames(programs)
-	elfInfo, goffsets, err := inspect(ctx, cfg, allFuncs)
+	elfInfo, goffsets, err := inspect(cfg, allFuncs, installedPids)
 	if err != nil {
 		return nil, fmt.Errorf("inspecting offsets: %w", err)
+	}
+	if elfInfo == nil {
+		return nil, nil
 	}
 
 	if goffsets != nil {
@@ -100,10 +122,21 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 		if len(programs) == 0 {
 			return nil, errors.New("no instrumentable function found")
 		}
+		slog.Debug("Found, and have, some Go offsets", "PID", elfInfo.Pid)
 	} else {
-		// We are not instrumenting a Go application, we override the programs
-		// list with the generic kernel/socket space filters
-		programs = []Tracer{&httpfltr.Tracer{Cfg: cfg, Metrics: metrics}}
+		slog.Debug("Go offsets were NOT found", "PID", elfInfo.Pid)
+		// TODO: Improve how this is only installed once:
+		if !httpFltrInstalled {
+			// Install only once:
+			httpFltrInstalled = true
+			// We are not instrumenting a Go application, we override the programs
+			// list with the generic kernel/socket space filters
+			programs = []Tracer{&httpfltr.Tracer{Cfg: cfg, Metrics: metrics}}
+			slog.Debug("Installing httpfltr tracer", "PID", elfInfo.Pid)
+		} else {
+			programs = nil
+			slog.Debug("httpfltr already installed", "PID", elfInfo.Pid)
+		}
 	}
 
 	// Instead of the executable file in the disk, we pass the /proc/<pid>/exec
@@ -112,36 +145,26 @@ func FindAndInstrument(ctx context.Context, cfg *ebpfcommon.TracerConfig, metric
 	if err != nil {
 		return nil, fmt.Errorf("opening %q executable file: %w", elfInfo.ProExeLinkPath, err)
 	}
-	if err := rlimit.RemoveMemlock(); err != nil {
-		return nil, fmt.Errorf("removing memory lock: %w", err)
-	}
-
-	pinPath, err := mountBpfPinPath(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("mounting BPF FS in %q: %w", cfg.BpfBaseDir, err)
-	}
 
 	if cfg.SystemWide {
-		log.Info("system wide instrumentation")
+		slog.Info("system wide instrumentation")
 	}
 	return &ProcessTracer{
 		programs: programs,
 		ELFInfo:  elfInfo,
 		goffsets: goffsets,
 		exe:      exe,
-		pinPath:  pinPath,
+		pinPath:  getBpfPinPath(cfg),
 	}, nil
 }
 
-// TraceReaders returns one StartFuncCtx for each discovered eBPF traceable source: GRPC, HTTP...
-func (pt *ProcessTracer) TraceReaders() ([]node.StartFuncCtx[[]any], error) {
+func (pt *ProcessTracer) Install(cfg *ebpfcommon.TracerConfig) error {
 	var log = logger()
+	log.Info("Process Tracer Install")
 
-	// startNodes contains the eBPF programs (HTTP, GRPC tracers...) plus a function
-	// that just waits for the passed context to finish before closing the BPF pin
-	// path
-	startNodes := []node.StartFuncCtx[[]any]{
-		waitToCloseBbfPinPath(pt.pinPath),
+	err := TracerSystemSetup(cfg)
+	if err != nil {
+		return fmt.Errorf("failed setting up tracer system: %w", err)
 	}
 
 	for _, p := range pt.programs {
@@ -150,10 +173,10 @@ func (pt *ProcessTracer) TraceReaders() ([]node.StartFuncCtx[[]any], error) {
 		spec, err := p.Load()
 		if err != nil {
 			unmountBpfPinPath(pt.pinPath)
-			return nil, fmt.Errorf("loading eBPF program: %w", err)
+			return fmt.Errorf("loading eBPF program: %w", err)
 		}
 		if err := spec.RewriteConstants(p.Constants(pt.ELFInfo, pt.goffsets)); err != nil {
-			return nil, fmt.Errorf("rewriting BPF constants definition: %w", err)
+			return fmt.Errorf("rewriting BPF constants definition: %w", err)
 		}
 		if err := spec.LoadAndAssign(p.BpfObjects(), &ebpf.CollectionOptions{
 			Maps: ebpf.MapOptions{
@@ -161,7 +184,7 @@ func (pt *ProcessTracer) TraceReaders() ([]node.StartFuncCtx[[]any], error) {
 			}}); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, fmt.Errorf("loading and assigning BPF objects: %w", err)
+			return fmt.Errorf("loading and assigning BPF objects: %w", err)
 		}
 		i := instrumenter{
 			exe:     pt.exe,
@@ -172,51 +195,73 @@ func (pt *ProcessTracer) TraceReaders() ([]node.StartFuncCtx[[]any], error) {
 		if err := i.goprobes(p); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, err
+			return err
 		}
 
 		//Kprobes to be used for native instrumentation points
 		if err := i.kprobes(p); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, err
+			return err
 		}
 
 		//Uprobes to be used for native module instrumentation points
 		if err := i.uprobes(pt.ELFInfo.Pid, p); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, err
+			return err
 		}
 
 		//Sock filters support
 		if err := i.sockfilters(p); err != nil {
 			printVerifierErrorInfo(err)
 			unmountBpfPinPath(pt.pinPath)
-			return nil, err
+			return err
 		}
+	}
 
+	return nil
+}
+
+// TraceReaders returns one StartFuncCtx for each discovered eBPF traceable source: GRPC, HTTP...
+func (pt *ProcessTracer) TraceReaders() ([]node.StartFuncCtx[[]any], error) {
+	var log = logger()
+	log.Info("Adding trace readers")
+
+	// startNodes contains the eBPF programs (HTTP, GRPC tracers...) plus a function
+	// that just waits for the passed context to finish before closing the BPF pin
+	// path
+	startNodes := []node.StartFuncCtx[[]any]{
+		waitToCloseBbfPinPath(pt.pinPath),
+	}
+
+	for _, p := range pt.programs {
+		plog := log.With("program", reflect.TypeOf(p))
+		plog.Info("appending program's run function to tracereader")
 		startNodes = append(startNodes, p.Run)
 	}
 
 	return startNodes, nil
 }
 
-func mountBpfPinPath(cfg *ebpfcommon.TracerConfig) (string, error) {
-	pinPath := path.Join(cfg.BpfBaseDir, strconv.Itoa(os.Getpid()))
+func getBpfPinPath(cfg *ebpfcommon.TracerConfig) string {
+	return path.Join(cfg.BpfBaseDir, strconv.Itoa(os.Getpid()))
+}
+
+func mountBpfPinPath(pinPath string) error {
 	log := slog.With("component", "ebpf.TracerProvider", "path", pinPath)
 	log.Debug("mounting BPF map pinning path")
 	if _, err := os.Stat(pinPath); err != nil {
 		if !os.IsNotExist(err) {
-			return "", fmt.Errorf("accessing %s stat: %w", pinPath, err)
+			return fmt.Errorf("accessing %s stat: %w", pinPath, err)
 		}
 		log.Debug("BPF map pinning path does not exist. Creating before mounting")
 		if err := os.MkdirAll(pinPath, 0700); err != nil {
-			return "", fmt.Errorf("creating directory %s: %w", pinPath, err)
+			return fmt.Errorf("creating directory %s: %w", pinPath, err)
 		}
 	}
 
-	return pinPath, bpfMount(pinPath)
+	return bpfMount(pinPath)
 }
 
 func logger() *slog.Logger { return slog.With("component", "ebpf.TracerProvider") }
@@ -280,16 +325,19 @@ func allGoFunctionNames(programs []Tracer) []string {
 	return functions
 }
 
-func inspect(ctx context.Context, cfg *ebpfcommon.TracerConfig, functions []string) (*exec.FileInfo, *goexec.Offsets, error) {
+func inspect(cfg *ebpfcommon.TracerConfig, functions []string, installedPids map[int32]bool) (*exec.FileInfo, *goexec.Offsets, error) {
 	// Finding the process by port is more complex, it needs to skip proxies
 	if cfg.Port != 0 {
-		return inspectByPort(ctx, cfg, functions)
+		return inspectByPort(cfg, functions, installedPids)
 	}
 
-	finder := exec.ProcessNamed(cfg.Exec)
-	elfs, err := exec.FindExecELF(ctx, finder)
+	finder := exec.ProcessNamed(cfg.Exec, installedPids)
+	elfs, err := exec.FindExecELF(finder)
 	for _, exec := range elfs {
 		defer exec.ELF.Close()
+	}
+	if elfs == nil {
+		return nil, nil, nil
 	}
 	if err != nil || len(elfs) == 0 {
 		return nil, nil, fmt.Errorf("looking for executable ELF: %w", err)
@@ -309,15 +357,18 @@ func inspect(ctx context.Context, cfg *ebpfcommon.TracerConfig, functions []stri
 	return &execElf, offsets, nil
 }
 
-func inspectByPort(ctx context.Context, cfg *ebpfcommon.TracerConfig, functions []string) (*exec.FileInfo, *goexec.Offsets, error) {
-	finder := exec.OwnedPort(cfg.Port)
+func inspectByPort(cfg *ebpfcommon.TracerConfig, functions []string, installedPids map[int32]bool) (*exec.FileInfo, *goexec.Offsets, error) {
+	finder := exec.OwnedPort(cfg.Port, installedPids)
 
-	elfs, err := exec.FindExecELF(ctx, finder)
+	elfs, err := exec.FindExecELF(finder)
 	for _, exec := range elfs {
 		defer exec.ELF.Close()
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("looking for executable ELF: %w", err)
+	}
+	if elfs == nil {
+		return nil, nil, nil
 	}
 
 	pidMap := map[int32]exec.FileInfo{}
@@ -361,7 +412,7 @@ func inspectByPort(ctx context.Context, cfg *ebpfcommon.TracerConfig, functions 
 		return nil, nil, fmt.Errorf("looking for executable ELF, no suitable processes found")
 	}
 
-	// check if the executable is a subprocess of another we have found, f so use the parent
+	// check if the executable is a subprocess of another we have found, if so use the parent
 	parentElf, ok := pidMap[execElf.Ppid]
 
 	if ok {
