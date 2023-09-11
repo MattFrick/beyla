@@ -2,6 +2,7 @@ package transform
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -49,6 +50,7 @@ type HTTPRequestSpan struct {
 	Start         int64
 	End           int64
 	ServiceName   string
+	TraceParent   string
 	Metadata      []MetadataTag
 }
 
@@ -140,6 +142,10 @@ func convertFromHTTPTrace(trace *ebpfcommon.HTTPRequestTrace) HTTPRequestSpan {
 	if pathLen < 0 {
 		pathLen = len(trace.Path)
 	}
+	tpLen := bytes.IndexByte(trace.TraceParent[:], 0)
+	if tpLen < 0 {
+		tpLen = len(trace.TraceParent)
+	}
 
 	peer := ""
 	hostname := ""
@@ -172,6 +178,7 @@ func convertFromHTTPTrace(trace *ebpfcommon.HTTPRequestTrace) HTTPRequestSpan {
 		Start:         int64(trace.StartMonotimeNs),
 		End:           int64(trace.EndMonotimeNs),
 		Status:        int(trace.Status),
+		TraceParent:   string(trace.TraceParent[:tpLen]),
 	}
 }
 
@@ -184,7 +191,7 @@ func removeQuery(url string) string {
 }
 
 func convertFromHTTPInfo(info *httpfltr.HTTPInfo) HTTPRequestSpan {
-	return HTTPRequestSpan{
+	span := HTTPRequestSpan{
 		Type:          EventType(info.Type),
 		ID:            0,
 		Method:        info.Method,
@@ -198,5 +205,8 @@ func convertFromHTTPInfo(info *httpfltr.HTTPInfo) HTTPRequestSpan {
 		End:           int64(info.EndMonotimeNs),
 		Status:        int(info.Status),
 		ServiceName:   info.Comm,
+		TraceParent:   info.TraceParent,
 	}
+	fmt.Println(" Span: ", span)
+	return span
 }

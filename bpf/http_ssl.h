@@ -72,11 +72,29 @@ struct {
     __type(value, ssl_args_t);
 } active_ssl_write_args SEC(".maps");
 
-static __always_inline void https_buffer_event(void *buf, int len, connection_info_t *conn) {
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, http_info_t);
+} per_cpu_scratch SEC(".maps");
+
+static __always_inline void https_buffer_event(void *read_buf, int len, connection_info_t *conn) {
+    // Get scratch space for buffer
+    u32 key = 0;
+    http_info_t *scratch_info = bpf_map_lookup_elem(&per_cpu_scratch, &key);
+    if (scratch_info == NULL) {
+        bpf_dbg_printk("Didn't find per-cpu arry element");
+        return;   // TODO: Check how best to handle this error
+    }
+    // Re-buffer into map scratch space
+    void *buf = scratch_info->buf;
+    bpf_probe_read(buf, len * sizeof(char), read_buf);
+    bpf_dbg_printk("buffer from SSL %s", buf);
+
     u8 packet_type = 0;
     if (is_http(buf, len, &packet_type)) {
-        http_info_t in = {0};
-        in.conn_info = *conn;
+        scratch_info->conn_info = *conn;
 
         http_connection_metadata_t meta = {
             .id = bpf_get_current_pid_tgid(),
@@ -86,13 +104,13 @@ static __always_inline void https_buffer_event(void *buf, int len, connection_in
         bpf_dbg_printk("=== https_filter len=%d pid=%d %s ===", len, pid_from_pid_tgid(meta.id), buf);
         //dbg_print_http_connection_info(conn); // commented out since GitHub CI doesn't like this call
 
-        http_info_t *info = get_or_set_http_info(&in, packet_type);
+        http_info_t *info = get_or_set_http_info(scratch_info, packet_type);
         if (!info) {
             return;
         }
 
         if (packet_type == PACKET_TYPE_REQUEST) {
-            process_http_request(info, buf);
+            process_http_request(info, buf, len);
         } else if (packet_type == PACKET_TYPE_RESPONSE) {
             process_http_response(info, buf, &meta);
 
@@ -164,7 +182,6 @@ static __always_inline void handle_ssl_buf(u64 id, ssl_args_t *args, int bytes_l
 
         if (conn) {
             void *read_buf = (void *)args->buf;
-            char buf[FULL_BUF_SIZE] = {0};
             
             u32 len = bytes_len & 0x0fffffff; // keep the verifier happy
 
@@ -172,9 +189,7 @@ static __always_inline void handle_ssl_buf(u64 id, ssl_args_t *args, int bytes_l
                 len = FULL_BUF_SIZE;
             }
 
-            bpf_probe_read(&buf, len * sizeof(char), read_buf);
-            bpf_dbg_printk("buffer from SSL %s", buf);
-            https_buffer_event(buf, len, conn);
+            https_buffer_event(read_buf, len, conn);
         } else {
             bpf_dbg_printk("No connection info! This is a bug.");
         }

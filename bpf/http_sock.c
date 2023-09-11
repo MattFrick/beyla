@@ -266,16 +266,16 @@ int socket__http_filter(struct __sk_buff *skb) {
 
     u8 packet_type = 0;
     if (is_http(buf, len, &packet_type) || tcp_close(&tcp)) { // we must check tcp_close second, a packet can be a close and a response
-        http_info_t info = {0};
-        info.conn_info = conn;
+        u32 key = 0;
+        http_info_t *scratch_info = bpf_map_lookup_elem(&per_cpu_scratch, &key);
+        if (scratch_info == NULL) {
+            bpf_dbg_printk("Didn't find per-cpu arry element");
+            return 0;   // TODO: Check how best to handle this error
+        }
 
+        scratch_info->conn_info = conn;
         http_connection_metadata_t *meta = NULL;
         if (packet_type) {
-            u32 full_len = skb->len - tcp.hdr_len;
-            if (full_len > FULL_BUF_SIZE) {
-                full_len = FULL_BUF_SIZE;
-            }
-            read_skb_bytes(skb, tcp.hdr_len, info.buf, full_len);
             if (packet_type == PACKET_TYPE_RESPONSE) {
                 // if we are filtering by application, ignore the packets not for this connection
                 meta = bpf_map_lookup_elem(&filtered_connections, &conn);
@@ -284,11 +284,22 @@ int socket__http_filter(struct __sk_buff *skb) {
                     return 0;
                 }
             }
+            u32 full_len = skb->len - tcp.hdr_len;
+            u32 buf_len = full_len;
+            if (buf_len > FULL_BUF_SIZE) {
+                buf_len = FULL_BUF_SIZE;
+            }
+            read_skb_bytes(skb, tcp.hdr_len, scratch_info->buf, buf_len);
+            bpf_dbg_printk("=== http_filter len=%d pid=%d type=%s===", (skb->len - tcp.hdr_len), (meta != NULL) ? pid_from_pid_tgid(meta->id) : -1, packet_type == PACKET_TYPE_REQUEST ? "Request" : "RespOrOther");
+            bpf_dbg_printk("    %s", buf);
+    
+            process_http(scratch_info, &tcp, packet_type, (skb->len - tcp.hdr_len), scratch_info->buf, meta);
+        } else {
+            //bpf_dbg_printk("=== http_filter, no packet type len=%d pid=%d ===", (skb->len - tcp.hdr_len), (meta != NULL) ? pid_from_pid_tgid(meta->id) : -1);
         }
-        bpf_dbg_printk("=== http_filter len=%d pid=%d %s ===", (skb->len - tcp.hdr_len), (meta != NULL) ? pid_from_pid_tgid(meta->id) : -1, buf);
+
         //dbg_print_http_connection_info(&conn);
 
-        process_http(&info, &tcp, packet_type, (skb->len - tcp.hdr_len), info.buf, meta);
     }
 
     return 0;

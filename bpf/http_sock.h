@@ -106,8 +106,10 @@ static __always_inline void read_skb_bytes(const void *skb, u32 offset, unsigned
 
 static __always_inline http_info_t *get_or_set_http_info(http_info_t *info, u8 packet_type) {
     if (packet_type == PACKET_TYPE_REQUEST) {
+        bpf_dbg_printk("  get_or_set_http_info: Request");    // MSF
         bpf_map_update_elem(&ongoing_http, &info->conn_info, info, BPF_NOEXIST); // noexist is critical here for correct keepalive functionality
     }
+    else {        bpf_dbg_printk("  get_or_set_http_info: Response"); }    // MSF
 
     return bpf_map_lookup_elem(&ongoing_http, &info->conn_info);
 }
@@ -120,11 +122,85 @@ static __always_inline bool still_reading(http_info_t *info) {
     return info->status == 0 && info->start_monotime_ns != 0;
 }
 
-static __always_inline void process_http_request(http_info_t *info, unsigned char *buf) {
-    bpf_memcpy(info->buf, buf, FULL_BUF_SIZE);
+static int copy_traceparent(http_info_t *info, int len, int i) {
+    for (int j = 0; i < len && i < FULL_BUF_SIZE && j < sizeof(info->traceparent_buf); i++, j++) {
+        char copy_char = info->buf[i];
+        if (copy_char == '\r' || copy_char == '\n') {
+#if 0
+            if (j < sizeof(info->traceparent_buf)) {
+                info->traceparent_buf[j] = 0;
+            }
+#endif
+            break;
+        }
+        //bpf_printk("copy_char");
+        if (j < sizeof(info->traceparent_buf)) {
+            info->traceparent_buf[j] = copy_char;
+        }
+    }
+
+    return i;
+}
+
+static void parse_http_headers(http_info_t *info, unsigned char *buf, int len) {
+#define LEN 6
+    const char match_str[LEN]  = "tracep";
+    u64 match_pos = 0;
+    for (int i = 0; i < len && i < FULL_BUF_SIZE; i++) {
+        char c = info->buf[i];
+        //bpf_printk("info->buf[%d]=%c", i, info->buf[i]);
+
+        if (match_pos < LEN) {
+            char match_char;
+            bpf_probe_read_kernel(&match_char, 1, match_str + match_pos);
+            if (c == match_char) {
+                //bpf_printk(" Matched %c", c);
+                //bpf_printk("%lu", match_pos);
+                match_pos++;
+#if 1
+                if (match_pos == (u64)LEN) {
+                    //bpf_printk("FOUND A MATCH!");
+#if 1
+                    i = copy_traceparent(info, len, i);
+#else
+                    char copy_char;
+                    for (int j = 0; i < len && i < FULL_BUF_SIZE && j < sizeof(info->traceparent_buf); i++, j++) {
+                    //for (; i < len && i < FULL_BUF_SIZE; i++) {
+                        copy_char = info->buf[i];
+                        if (copy_char == '\r' || copy_char == '\n') {
+                            break;
+                        }
+                        //bpf_printk("copy_char");
+#if 1
+                        if (j < sizeof(info->traceparent_buf)) {
+                            info->traceparent_buf[j] = copy_char;
+                        }
+#endif
+                    }
+#endif
+                    return;
+                }
+#endif
+            } else {
+                match_pos = 0;
+            }
+        }
+    }
+}
+
+static __always_inline void process_http_request(http_info_t *info, unsigned char *buf, int len) {
+    bpf_memcpy(info->buf, buf, FULL_BUF_SIZE);  // MSF: This should be unnecessary due to bpf_map_update_elem creating it with same buf
     info->start_monotime_ns = bpf_ktime_get_ns();
     info->status = 0;
     info->len = 0;
+    parse_http_headers(info, buf, len);
+#if 0
+    info->traceparent_buf[0] = 't';
+    info->traceparent_buf[1] = 'e';
+    info->traceparent_buf[2] = 's';
+    info->traceparent_buf[3] = 't';
+    info->traceparent_buf[4] = 0;
+#endif
 }
 
 static __always_inline void process_http_response(http_info_t *info, unsigned char *buf, http_connection_metadata_t *meta) {
@@ -149,7 +225,7 @@ static __always_inline void finish_http(http_info_t *info) {
         bpf_map_delete_elem(&ongoing_http, &info->conn_info);
         // bpf_map_delete_elem(&filtered_connections, &info->conn_info); // don't clean this up, doesn't work with keepalive
         // we don't explicitly clean-up the http_tcp_seq, we need to still monitor for dups
-    }        
+    }
 }
 
 static __always_inline void process_http(http_info_t *in, protocol_info_t *tcp, u8 packet_type, u32 packet_len, unsigned char *buf, http_connection_metadata_t *meta) {
@@ -159,7 +235,7 @@ static __always_inline void process_http(http_info_t *in, protocol_info_t *tcp, 
     }
 
     if (packet_type == PACKET_TYPE_REQUEST) {
-        process_http_request(info, buf);
+        process_http_request(info, buf, packet_len);
     } else if (packet_type == PACKET_TYPE_RESPONSE) {
         process_http_response(info, buf, meta);
     }

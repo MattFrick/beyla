@@ -151,6 +151,12 @@ int uprobe_WriteHeader(struct pt_regs *ctx) {
 
     trace->status = (u16)(((u64)GO_PARAM2(ctx)) & 0x0ffff);
 
+    trace->trace_parent[0] = 'T';
+    trace->trace_parent[1] = 'e';
+    trace->trace_parent[2] = 's';
+    trace->trace_parent[3] = 't';
+    trace->trace_parent[4] = 0;
+
     // submit the completed trace via ringbuffer
     bpf_ringbuf_submit(trace, get_flags());
 

@@ -5,8 +5,9 @@
 #include "bpf_helpers.h"
 #include "http_defs.h"
 
-#define FULL_BUF_SIZE 160 // should be enough for most URLs, we may need to extend it if not. Must be multiple of 16 for the copy to work.
+#define FULL_BUF_SIZE 320 // should be enough for most URLs, we may need to extend it if not. Must be multiple of 16 for the copy to work.
 #define BUF_COPY_BLOCK_SIZE 16
+#define TRACEPARENT_BUF_SIZE 64
 
 // Struct to keep information on the connections in flight 
 // s = source, d = destination
@@ -25,6 +26,7 @@ typedef struct http_info {
     u64 start_monotime_ns;
     u64 end_monotime_ns;
     unsigned char buf[FULL_BUF_SIZE] __attribute__ ((aligned (8))); // ringbuffer memcpy complains unless this is 8 byte aligned
+    unsigned char traceparent_buf[TRACEPARENT_BUF_SIZE] __attribute__ ((aligned (8)));
     u32 pid; // we need this for system wide tracking so we can find the service name
     u32 len;
     u16 status;    

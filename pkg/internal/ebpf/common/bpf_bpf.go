@@ -26,6 +26,7 @@ type bpfHttpRequestTrace struct {
 	HostLen           uint64
 	HostPort          uint32
 	ContentLength     int64
+	TraceParent       [57]uint8
 }
 
 // loadBpf returns the embedded CollectionSpec for bpf.

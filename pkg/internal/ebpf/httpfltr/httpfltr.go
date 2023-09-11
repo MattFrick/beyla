@@ -32,11 +32,12 @@ type BPFConnInfo bpfConnectionInfoT
 
 type HTTPInfo struct {
 	BPFHTTPInfo
-	Method string
-	URL    string
-	Comm   string
-	Host   string
-	Peer   string
+	Method      string
+	URL         string
+	Comm        string
+	Host        string
+	Peer        string
+	TraceParent string
 }
 
 type Tracer struct {
@@ -235,6 +236,7 @@ func (p *Tracer) toRequestTrace(record *ringbuf.Record) (any, error) {
 	}
 	result.URL = event.url()
 	result.Method = event.method()
+	result.TraceParent = event.traceparent()
 	if p.Cfg.SystemWide {
 		result.Comm = p.serviceName(event.Pid)
 	}
@@ -264,6 +266,9 @@ func (event *BPFHTTPInfo) method() string {
 	}
 
 	return buf[:space]
+}
+func (event *BPFHTTPInfo) traceparent() string {
+	return string(event.TraceparentBuf[:])
 }
 
 func (event *BPFHTTPInfo) hostFromBuf() (string, int) {

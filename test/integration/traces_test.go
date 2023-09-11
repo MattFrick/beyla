@@ -17,6 +17,8 @@ import (
 )
 
 func testHTTPTraces(t *testing.T) {
+	//	waitForTestComponentsSub(t, instrumentedServiceStdURL, "/smoke")
+
 	doHTTPGet(t, instrumentedServiceStdURL+"/create-trace?delay=10ms", 200)
 
 	var trace jaeger.Trace
