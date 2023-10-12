@@ -16,8 +16,9 @@ IMG = $(IMG_REGISTRY)/$(IMG_ORG)/$(IMG_NAME):$(VERSION)
 
 # The generator is a local container image that provides a reproducible environment for
 # building eBPF binaries
-GEN_IMG_NAME ?= ebpf-generator
-GEN_IMG ?= $(GEN_IMG_NAME):$(VERSION)
+GENERATOR_VERSION ?= latest
+GEN_IMG_NAME ?= mariomac/ebpf-generator
+GEN_IMG ?= $(GEN_IMG_NAME):$(GENERATOR_VERSION)
 
 COMPOSE_ARGS ?= -f test/integration/docker-compose.yml
 
