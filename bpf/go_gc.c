@@ -15,13 +15,14 @@
 #include "utils.h"
 #include "bpf_dbg.h"
 #include "ringbuf.h"
+#include "http_trace.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 #define MAX_GO_PIDS  100
 typedef struct go_gc_t {
-    u64  world_stop_monotime_ns;
-    bool reason_is_gc;
+    u64 world_stop_monotime_ns;
+    u8  reason;
 } go_gc;
 
 struct {
@@ -48,15 +49,27 @@ int uprobe_runtime_stop_the_world_with_sema(struct pt_regs *ctx) {
     go_gc gc = { .world_stop_monotime_ns = bpf_ktime_get_ns() };
     u64 pid_tgid = bpf_get_current_pid_tgid();
     bpf_dbg_printk("=== uprobe_runtime_stop_the_world_with_sema pid=%u, gid=%u", pid_tgid >> 32, pid_tgid & 0xFFFFFFFF);
-    u8 reason = (u8)(u64)ctx->ax; // TODO: Fix headers to allow pid.h and vmlinux to define ax vs. rax
-    gc.reason_is_gc = reason_is_GC(reason);
     u32 pid = valid_pid(pid_tgid);
     if (pid) {
+        gc.reason = (u8)(u64)ctx->ax; // TODO: Fix headers to allow pid.h and vmlinux to define ax vs. rax
         if (0 != bpf_map_update_elem(&ongoing_GC, &pid, &gc, BPF_NOEXIST)) {
             bpf_dbg_printk("Couldn't update ongoing GC map");
         }
     }
     return 0;
+}
+
+static inline void submit_gc_event(go_gc *gc, u32 pid, u64 world_start_time) {
+    http_request_trace *trace = bpf_ringbuf_reserve(&events, sizeof(http_request_trace), 0);
+    if (!trace) {
+        bpf_dbg_printk("can't reserve space in the ringbuffer");
+        return;
+    }
+    //trace->type = EVENT_GO_GC_EVENT;
+    trace->id = (u64)pid;
+    // Event is duration that GC stopped the world.  So event _start_ time is world _stop_ time:
+    trace->start_monotime_ns = gc->world_stop_monotime_ns;
+    trace->end_monotime_ns = world_start_time;
 }
 
 SEC("uprobe/runtime_startTheWorldWithSema")
@@ -69,13 +82,14 @@ int uprobe_runtime_start_the_world_with_sema(struct pt_regs *ctx) {
         go_gc *gc = bpf_map_lookup_elem(&ongoing_GC, &pid); 
         if (gc != NULL) {
             u64 elapsed = world_start_time - gc->world_stop_monotime_ns;
-            if (gc->reason_is_gc) {
-                bpf_printk("World was stopped by GC for: %luus", elapsed/1000);
+            if (reason_is_GC(gc->reason)) {
+                bpf_printk("World was stopped by GC for: %luus", elapsed/1000); // TODO: REMOVE ME
+                submit_gc_event(gc, pid, world_start_time);
             } else {
-                bpf_printk("WORLD STOPPED FOR SOMETHING ELSE: %luus", elapsed/1000);
+                bpf_printk("WORLD STOPPED FOR SOMETHING ELSE: %luus", elapsed/1000);    // TODO: REMOVE ME
             }
+            bpf_map_delete_elem(&ongoing_GC, &pid);
         }
-        bpf_map_delete_elem(&ongoing_GC, &pid);
     }
     return 0;
 }
