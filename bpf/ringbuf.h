@@ -1,7 +1,7 @@
 #ifndef RINGBUF_H
 #define RINGBUF_H
 
-#include "utils.h"
+#include "vmlinux.h"
 
 // These need to line up with some Go identifiers:
 // EventTypeHTTP, EventTypeGRPC, EventTypeHTTPClient, EventTypeGRPCClient, EventTypeSQLClient

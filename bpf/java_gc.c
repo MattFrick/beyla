@@ -14,6 +14,8 @@
 #include "bpf_dbg.h"
 #include "ringbuf.h"
 
+char __license[] SEC("license") = "Dual MIT/GPL";
+
 #if 0
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
@@ -25,12 +27,12 @@ struct {
 
 SEC("uprobe/mem__pool__gc__begin")
 int uprobe_MemPoolGcBegin(struct pt_regs *ctx) {
-    bpf_dbg_printk("=== uprobe/MemPoolGcBegin === ");
+    bpf_printk("=== uprobe/MemPoolGcBegin === ");// TODO: Change back to _dbg
     return 0;
 }
 
 SEC("uprobe/mem__pool__gc__end")
 int uprobe_MemPoolGcEnd(struct pt_regs *ctx) {
-    bpf_dbg_printk("=== uprobe/MemPoolGcEnd === ");
+    bpf_printk("=== uprobe/MemPoolGcEnd === "); // TODO: Change back to _dbg
     return 0;
 }

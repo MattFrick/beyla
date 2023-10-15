@@ -10,7 +10,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package goruntime
+package javagc
 
 import (
 	"context"
@@ -68,6 +68,12 @@ func (p *Tracer) KProbes() map[string]ebpfcommon.FunctionPrograms {
 func (p *Tracer) UProbes() map[string]map[string]ebpfcommon.FunctionPrograms {
 	return map[string]map[string]ebpfcommon.FunctionPrograms{
 		"libjvm.so": {
+			"JVM_GC": {
+				Required: false,
+				Start:    p.bpfObjects.UprobeMemPoolGcBegin,
+				End:      p.bpfObjects.UprobeMemPoolGcEnd,
+			},
+			/* UDST probes, not found by cilium.
 			"mem__pool__gc__begin": {
 				Required: false,
 				Start:    p.bpfObjects.UprobeMemPoolGcBegin,
@@ -76,6 +82,7 @@ func (p *Tracer) UProbes() map[string]map[string]ebpfcommon.FunctionPrograms {
 				Required: false,
 				Start:    p.bpfObjects.UprobeMemPoolGcEnd,
 			},
+			*/
 		},
 	}
 }
@@ -85,7 +92,7 @@ func (p *Tracer) SocketFilters() []*ebpf.Program {
 }
 
 func (p *Tracer) Run(ctx context.Context, eventsChan chan<- []request.Span, service svc.ID) {
-	logger := slog.With("component", "goruntime.Tracer")
+	logger := slog.With("component", "javagc.Tracer")
 	ebpfcommon.ForwardRingbuf[ebpfcommon.HTTPRequestTrace](
 		service,
 		p.Cfg, logger, p.bpfObjects.Events,
