@@ -11,13 +11,14 @@ import (
 type EventType int
 
 // The following consts need to coincide with some C identifiers:
-// EVENT_HTTP_REQUEST, EVENT_GRPC_REQUEST, EVENT_HTTP_CLIENT, EVENT_GRPC_CLIENT, EVENT_SQL_CLIENT
+// EVENT_HTTP_REQUEST, EVENT_GRPC_REQUEST, EVENT_HTTP_CLIENT, EVENT_GRPC_CLIENT, EVENT_SQL_CLIENT, EVENT_GO_GC
 const (
 	EventTypeHTTP EventType = iota + 1
 	EventTypeGRPC
 	EventTypeHTTPClient
 	EventTypeGRPCClient
 	EventTypeSQLClient
+	EventTypeGoGC
 )
 
 type converter struct {

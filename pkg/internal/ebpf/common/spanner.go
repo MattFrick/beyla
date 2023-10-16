@@ -43,6 +43,9 @@ func HTTPRequestTraceToSpan(trace *HTTPRequestTrace) request.Span {
 	case request.EventTypeSQLClient:
 		trace.GoStartMonotimeNs = trace.StartMonotimeNs
 		method, path = sqlprune.SQLParseOperationAndTable(path)
+	case request.EventTypeGoGC:
+		trace.GoStartMonotimeNs = trace.StartMonotimeNs
+		method = extractGoGcMethod(trace.Status)
 	default:
 		log.Warn("unknown trace type", "type", trace.Type)
 	}
@@ -100,4 +103,14 @@ func extractTraceparent(traceparent [55]byte) string {
 		return ""
 	}
 	return string(traceparent[:])
+}
+
+func extractGoGcMethod(reasonInStatus uint16) string {
+	var phase string
+	if reasonInStatus == 0 {
+		phase = "mark"
+	} else {
+		phase = "sweep"
+	}
+	return phase
 }
