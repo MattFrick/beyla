@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"runtime"
 
 	_ "modernc.org/sqlite"
 )
@@ -53,6 +54,7 @@ func main() {
 				fmt.Println("name: ", name, " id: ", id)
 			}
 		}
+		runtime.GC()
 	})
 	err = http.ListenAndServe(":8080", nil)
 	CheckError(err)
