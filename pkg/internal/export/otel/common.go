@@ -38,8 +38,9 @@ const (
 // Buckets defines the histograms bucket boundaries, and allows users to
 // redefine them
 type Buckets struct {
-	DurationHistogram    []float64 `yaml:"duration_histogram"`
-	RequestSizeHistogram []float64 `yaml:"request_size_histogram"`
+	DurationHistogram      []float64 `yaml:"duration_histogram"`
+	RequestSizeHistogram   []float64 `yaml:"request_size_histogram"`
+	ShortDurationHistogram []float64 `yaml:"short_duration_histogram"`
 }
 
 var DefaultBuckets = Buckets{
@@ -48,6 +49,8 @@ var DefaultBuckets = Buckets{
 	DurationHistogram: []float64{0, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10},
 
 	RequestSizeHistogram: []float64{0, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192},
+
+	ShortDurationHistogram: []float64{0, 0.000010, 0.000025, 0.000050, 0.000075, 0.000100, 0.000250, 0.000500, 0.000750, 0.001, 0.0025, 0.005},
 }
 
 func otelResource(service svc.ID) *resource.Resource {

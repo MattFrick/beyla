@@ -176,7 +176,7 @@ func (mr *MetricsReporter) newMetricSet(service svc.ID) (*Metrics, error) {
 			metric.WithView(otelHistogramBuckets(RPCServerDuration, mr.cfg.Buckets.DurationHistogram)),
 			metric.WithView(otelHistogramBuckets(RPCClientDuration, mr.cfg.Buckets.DurationHistogram)),
 			metric.WithView(otelHistogramBuckets(SQLClientDuration, mr.cfg.Buckets.DurationHistogram)),
-			metric.WithView(otelHistogramBuckets(GoGCDuration, mr.cfg.Buckets.DurationHistogram)),
+			metric.WithView(otelHistogramBuckets(GoGCDuration, mr.cfg.Buckets.ShortDurationHistogram)),
 			metric.WithView(otelHistogramBuckets(HTTPServerRequestSize, mr.cfg.Buckets.RequestSizeHistogram)),
 			metric.WithView(otelHistogramBuckets(HTTPClientRequestSize, mr.cfg.Buckets.RequestSizeHistogram)),
 		),
