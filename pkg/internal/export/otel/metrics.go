@@ -343,7 +343,7 @@ func (mr *MetricsReporter) metricAttributes(span *request.Span) attribute.Set {
 		}
 	case request.EventTypeGoGC:
 		attrs = []attribute.KeyValue{
-			attribute.Key("process.runtime.go.gc.phase").String(span.Method), // TODO: Semantic convention
+			attribute.Key("go.gc.action").String(span.Method),
 		}
 	}
 

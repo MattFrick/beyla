@@ -50,7 +50,7 @@ var DefaultBuckets = Buckets{
 
 	RequestSizeHistogram: []float64{0, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192},
 
-	ShortDurationHistogram: []float64{0, 0.000010, 0.000025, 0.000050, 0.000075, 0.000100, 0.000250, 0.000500, 0.000750, 0.001, 0.0025, 0.005},
+	ShortDurationHistogram: []float64{0, 0.000010, 0.000025, 0.000050, 0.000075, 0.000100, 0.000250, 0.000500, 0.000750, 0.001, 0.0025, 0.005, 0.01},
 }
 
 func otelResource(service svc.ID) *resource.Resource {

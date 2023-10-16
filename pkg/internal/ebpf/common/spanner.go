@@ -106,11 +106,11 @@ func extractTraceparent(traceparent [55]byte) string {
 }
 
 func extractGoGcMethod(reasonInStatus uint16) string {
-	var phase string
+	var gcAction string
 	if reasonInStatus == 0 {
-		phase = "mark"
+		gcAction = "mark"
 	} else {
-		phase = "sweep"
+		gcAction = "sweep"
 	}
-	return phase
+	return gcAction
 }

@@ -22,7 +22,7 @@ const (
 	RPCServerDuration     = "rpc_server_duration_seconds"
 	RPCClientDuration     = "rpc_client_duration_seconds"
 	SQLClientDuration     = "sql_client_duration_seconds"
-	GoGCDuration          = "go_gc_duration_seconds"
+	GoGCDuration          = "go_gc_stw_duration_seconds"
 	HTTPServerRequestSize = "http_server_request_size_bytes"
 	HTTPClientRequestSize = "http_client_request_size_bytes"
 
@@ -39,7 +39,7 @@ const (
 	rpcMethodKey         = "rpc_method"
 	rpcSystemGRPC        = "rpc_system"
 	DBOperationKey       = "db_operation"
-	goGCphase            = "process_runtime_go_gc_phase"
+	goGCaction           = "go_gc_action"
 
 	k8sSrcNameKey      = "k8s_src_name"
 	k8sSrcNamespaceKey = "k8s_src_namespace"
@@ -122,7 +122,7 @@ func newReporter(ctx context.Context, cfg *PrometheusConfig, ctxInfo *global.Con
 		goGCDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    GoGCDuration,
 			Help:    "duration of Go GC stop the world, in seconds",
-			Buckets: cfg.Buckets.DurationHistogram,
+			Buckets: cfg.Buckets.ShortDurationHistogram,
 		}, labelNamesGoGC(ctxInfo)),
 		httpRequestSize: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    HTTPServerRequestSize,
@@ -182,7 +182,7 @@ func (r *metricsReporter) observe(span *request.Span) {
 // labelNamesSQL must return the label names in the same order as would be returned
 // by labelValuesGoGC
 func labelNamesGoGC(ctxInfo *global.ContextInfo) []string {
-	names := []string{serviceNameKey, serviceNamespaceKey, goGCphase}
+	names := []string{serviceNameKey, serviceNamespaceKey, goGCaction}
 	if ctxInfo.K8sDecoration {
 		names = appendK8sLabelNames(names)
 	}
