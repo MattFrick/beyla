@@ -68,21 +68,21 @@ func (p *Tracer) KProbes() map[string]ebpfcommon.FunctionPrograms {
 func (p *Tracer) UProbes() map[string]map[string]ebpfcommon.FunctionPrograms {
 	return map[string]map[string]ebpfcommon.FunctionPrograms{
 		"libjvm.so": {
-			"JVM_GC": {
-				Required: false,
-				Start:    p.bpfObjects.UprobeMemPoolGcBegin,
-				End:      p.bpfObjects.UprobeMemPoolGcEnd,
-			},
-			/* UDST probes, not found by cilium.
-			"mem__pool__gc__begin": {
+			// This function encloses USDT for "mem__pool__gc__begin":
+			"_ZN15GCMemoryManager8gc_beginEbbb": {
 				Required: false,
 				Start:    p.bpfObjects.UprobeMemPoolGcBegin,
 			},
-			"mem__pool__gc__end": {
+			// This function encloses USDT for "mem__pool__gc__end":
+			"_ZN15GCMemoryManager6gc_endEbbbbN7GCCause5CauseEbPKc": {
 				Required: false,
 				Start:    p.bpfObjects.UprobeMemPoolGcEnd,
 			},
-			*/
+			// Alternative to above:
+			"_ZN15GCMemoryManager6gc_endEbbbbN7GCCause5CauseEb": {
+				Required: false,
+				Start:    p.bpfObjects.UprobeMemPoolGcEnd,
+			},
 		},
 	}
 }
