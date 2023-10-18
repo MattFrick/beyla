@@ -1,15 +1,17 @@
 #ifndef RINGBUF_H
 #define RINGBUF_H
 
-#include "utils.h"
+#include "vmlinux.h"
 
 // These need to line up with some Go identifiers:
-// EventTypeHTTP, EventTypeGRPC, EventTypeHTTPClient, EventTypeGRPCClient, EventTypeSQLClient
+// EventTypeHTTP, EventTypeGRPC, EventTypeHTTPClient, EventTypeGRPCClient, EventTypeSQLClient, EventTypeGoGC
 #define EVENT_HTTP_REQUEST 1
 #define EVENT_GRPC_REQUEST 2
 #define EVENT_HTTP_CLIENT  3
 #define EVENT_GRPC_CLIENT  4
 #define EVENT_SQL_CLIENT   5
+#define EVENT_GO_GC        6
+#define EVENT_JAVA_GC	   7
 
 // setting here the following map definitions without pinning them to a global namespace
 // would lead that services running both HTTP and GRPC server would duplicate 

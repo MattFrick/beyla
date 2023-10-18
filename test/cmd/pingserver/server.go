@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
 )
@@ -44,6 +45,7 @@ func pingHandler(rw http.ResponseWriter, req *http.Request) {
 	}
 	slog.Debug(fmt.Sprintf("%T", rw))
 	slog.Debug("written response", "url", req.URL, slog.Int("bytes", b))
+	runtime.GC()
 }
 
 func main() {

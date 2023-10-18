@@ -27,6 +27,7 @@ otel_metrics_export:
   endpoint: localhost:3030
   buckets:
     duration_histogram: [0, 1, 2]
+    short_duration_histogram: [0.000010, 0.001, 0.01]
 prometheus_export:
   buckets:
     request_size_histogram: [0, 10, 20, 22]
@@ -78,8 +79,9 @@ kubernetes:
 			Protocol:          otel.ProtocolUnset,
 			ReportersCacheLen: 16,
 			Buckets: otel.Buckets{
-				DurationHistogram:    []float64{0, 1, 2},
-				RequestSizeHistogram: otel.DefaultBuckets.RequestSizeHistogram,
+				DurationHistogram:      []float64{0, 1, 2},
+				ShortDurationHistogram: []float64{0.000010, 0.001, 0.01},
+				RequestSizeHistogram:   otel.DefaultBuckets.RequestSizeHistogram,
 			},
 		},
 		Traces: otel.TracesConfig{
@@ -94,8 +96,9 @@ kubernetes:
 		Prometheus: prom.PrometheusConfig{
 			Path: "/metrics",
 			Buckets: otel.Buckets{
-				DurationHistogram:    otel.DefaultBuckets.DurationHistogram,
-				RequestSizeHistogram: []float64{0, 10, 20, 22},
+				DurationHistogram:      otel.DefaultBuckets.DurationHistogram,
+				ShortDurationHistogram: otel.DefaultBuckets.ShortDurationHistogram,
+				RequestSizeHistogram:   []float64{0, 10, 20, 22},
 			}},
 		InternalMetrics: imetrics.Config{
 			Prometheus: imetrics.PrometheusConfig{

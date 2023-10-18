@@ -43,6 +43,9 @@ func HTTPRequestTraceToSpan(trace *HTTPRequestTrace) request.Span {
 	case request.EventTypeSQLClient:
 		trace.GoStartMonotimeNs = trace.StartMonotimeNs
 		method, path = sqlprune.SQLParseOperationAndTable(path)
+	case request.EventTypeGoGC:
+		trace.GoStartMonotimeNs = trace.StartMonotimeNs
+		method = extractGoGcMethod(trace.Status)
 	default:
 		log.Warn("unknown trace type", "type", trace.Type)
 	}
@@ -100,4 +103,22 @@ func extractTraceparent(traceparent [55]byte) string {
 		return ""
 	}
 	return string(traceparent[:])
+}
+
+func extractGoGcMethod(gcActionInStatus uint16) string {
+	var gcAction string
+	// See bpf/gc.h, enum gc_action GC_UNKNOWN, GC_MARK, GC_SWEEP, GC_STW_MARK_TERM, GC_STW_SWEEP_TERM,
+	switch gcActionInStatus {
+	case 1: // GC_MARK
+		gcAction = "mark"
+	case 2: // GC_SWEEP
+		gcAction = "sweep"
+	case 3: // GC_STW_MARK_TERM
+		gcAction = "stw_mark_term"
+	case 4: // GC_STW_SWEEP_TERM
+		gcAction = "stw_sweep_term"
+	default:
+		gcAction = "unknown"
+	}
+	return gcAction
 }

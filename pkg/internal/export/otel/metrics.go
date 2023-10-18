@@ -34,6 +34,7 @@ const (
 	RPCServerDuration     = "rpc.server.duration"
 	RPCClientDuration     = "rpc.client.duration"
 	SQLClientDuration     = "sql.client.duration"
+	GoGCDuration          = "go.gc.duration"
 	HTTPServerRequestSize = "http.server.request.size"
 	HTTPClientRequestSize = "http.client.request.size"
 
@@ -119,6 +120,7 @@ type Metrics struct {
 	grpcDuration          instrument.Float64Histogram
 	grpcClientDuration    instrument.Float64Histogram
 	sqlClientDuration     instrument.Float64Histogram
+	goGCDuration          instrument.Float64Histogram
 	httpRequestSize       instrument.Float64Histogram
 	httpClientRequestSize instrument.Float64Histogram
 }
@@ -174,6 +176,7 @@ func (mr *MetricsReporter) newMetricSet(service svc.ID) (*Metrics, error) {
 			metric.WithView(otelHistogramBuckets(RPCServerDuration, mr.cfg.Buckets.DurationHistogram)),
 			metric.WithView(otelHistogramBuckets(RPCClientDuration, mr.cfg.Buckets.DurationHistogram)),
 			metric.WithView(otelHistogramBuckets(SQLClientDuration, mr.cfg.Buckets.DurationHistogram)),
+			metric.WithView(otelHistogramBuckets(GoGCDuration, mr.cfg.Buckets.ShortDurationHistogram)),
 			metric.WithView(otelHistogramBuckets(HTTPServerRequestSize, mr.cfg.Buckets.RequestSizeHistogram)),
 			metric.WithView(otelHistogramBuckets(HTTPClientRequestSize, mr.cfg.Buckets.RequestSizeHistogram)),
 		),
@@ -202,6 +205,10 @@ func (mr *MetricsReporter) newMetricSet(service svc.ID) (*Metrics, error) {
 	m.sqlClientDuration, err = meter.Float64Histogram(SQLClientDuration, instrument.WithUnit("s"))
 	if err != nil {
 		return nil, fmt.Errorf("creating sql client duration histogram metric: %w", err)
+	}
+	m.goGCDuration, err = meter.Float64Histogram(GoGCDuration, instrument.WithUnit("s"))
+	if err != nil {
+		return nil, fmt.Errorf("creating Go GC duration histogram metric: %w", err)
 	}
 	m.httpRequestSize, err = meter.Float64Histogram(HTTPServerRequestSize, instrument.WithUnit("By"))
 	if err != nil {
@@ -293,6 +300,7 @@ func otelHistogramBuckets(metricName string, buckets []float64) metric.View {
 		})
 }
 
+// nolint:cyclop
 func (mr *MetricsReporter) metricAttributes(span *request.Span) attribute.Set {
 	var attrs []attribute.KeyValue
 
@@ -333,6 +341,10 @@ func (mr *MetricsReporter) metricAttributes(span *request.Span) attribute.Set {
 		attrs = []attribute.KeyValue{
 			semconv.DBOperation(span.Method),
 		}
+	case request.EventTypeGoGC:
+		attrs = []attribute.KeyValue{
+			attribute.Key("go.gc.action").String(span.Method),
+		}
 	}
 
 	if span.ServiceID.Name != "" { // we don't have service name set, system wide instrumentation
@@ -364,6 +376,8 @@ func (r *Metrics) record(span *request.Span, attrs attribute.Set) {
 		r.httpClientRequestSize.Record(r.ctx, float64(span.ContentLength), attrOpt)
 	case request.EventTypeSQLClient:
 		r.sqlClientDuration.Record(r.ctx, duration, attrOpt)
+	case request.EventTypeGoGC:
+		r.goGCDuration.Record(r.ctx, duration, attrOpt)
 	}
 }
 

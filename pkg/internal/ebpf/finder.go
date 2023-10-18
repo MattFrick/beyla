@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	ebpfcommon "github.com/grafana/beyla/pkg/internal/ebpf/common"
+	"github.com/grafana/beyla/pkg/internal/ebpf/gogc"
 	"github.com/grafana/beyla/pkg/internal/ebpf/goruntime"
 	"github.com/grafana/beyla/pkg/internal/ebpf/gosql"
 	"github.com/grafana/beyla/pkg/internal/ebpf/grpc"
@@ -118,6 +119,7 @@ func (pf *ProcessFinder) findAndInstrument(ctx context.Context, metrics imetrics
 		&grpc.Tracer{Cfg: &pf.Cfg.EBPF, Metrics: metrics},
 		&goruntime.Tracer{Cfg: &pf.Cfg.EBPF, Metrics: metrics},
 		&gosql.Tracer{Cfg: &pf.Cfg.EBPF, Metrics: metrics},
+		&gogc.Tracer{Cfg: &pf.Cfg.EBPF, Metrics: metrics},
 	}
 
 	// merging all the functions from all the programs, in order to do
@@ -139,7 +141,7 @@ func (pf *ProcessFinder) findAndInstrument(ctx context.Context, metrics imetrics
 	} else {
 		// We are not instrumenting a Go application, we override the programs
 		// list with the generic kernel/socket space filters
-		programs = []Tracer{&httpfltr.Tracer{Cfg: pf.Cfg, Metrics: metrics}}
+		programs = []Tracer{&httpfltr.Tracer{Cfg: pf.Cfg, Metrics: metrics}} // &javagc.Tracer{Cfg: &pf.Cfg.EBPF, Metrics: metrics}
 	}
 
 	// Instead of the executable file in the disk, we pass the /proc/<pid>/exec
