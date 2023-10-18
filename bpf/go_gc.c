@@ -20,35 +20,27 @@
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
-#define MAX_GO_PIDS  100
-
 #define GO_STW_GC_MARK_TERM     1
 #define GO_STW_GC_SWEEP_TERM    2
 
-typedef struct go_gc_t {
-    u64 world_stop_monotime_ns;
-    u8  reason;
-} go_gc;
+// For Go we track 2 things seperately:
+// 1) the pair of stop-the-world pauses during GC mark
+// 2) the entire GC start through finish of concurrent GC mark phase.
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, u32); // key: pid
+    __type(value, gc_event);
+    __uint(max_entries, MAX_ONGOING_GC_ENTRIES);
+} ongoing_go_gc SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __type(key, u32); // key: pid
-    __type(value, go_gc);
-    __uint(max_entries, MAX_GO_PIDS);
-} ongoing_GC SEC(".maps");
+    __type(value, gc_event);
+    __uint(max_entries, MAX_ONGOING_GC_ENTRIES);
+} ongoing_go_stw_gc SEC(".maps");
 
-static inline bool reason_is_GC(u8 reason) {
-    switch (reason) {
-    case GO_STW_GC_MARK_TERM:
-    case GO_STW_GC_SWEEP_TERM:
-        return true;
-    default:
-        // Some other stop the world reason that we're not instrumenting here.
-        return false;
-    }
-}
-
-static inline u16 reason_to_status(u8 reason) {
+static inline u16 go_reason_to_gc_action(u8 reason) {
     switch (reason) {
     case GO_STW_GC_MARK_TERM:  // End of mark phase
         return (u16)GC_STW_MARK_TERM;
@@ -61,64 +53,34 @@ static inline u16 reason_to_status(u8 reason) {
 
 SEC("uprobe/runtime_stopTheWorldWithSema")
 int uprobe_runtime_stop_the_world_with_sema(struct pt_regs *ctx) {
-    go_gc gc = { .world_stop_monotime_ns = bpf_ktime_get_ns() };
-    u64 pid_tgid = bpf_get_current_pid_tgid();
-    bpf_dbg_printk("=== uprobe_runtime_stop_the_world_with_sema pid=%u, tgid=%u", pid_tgid >> 32, pid_tgid & 0xFFFFFFFF);
-    u32 pid = valid_pid(pid_tgid);
-    if (pid) {
-        gc.reason = (u8)(u64)ctx->ax; // TODO: Fix headers to allow pid.h and vmlinux to define ax vs. rax for GO_PARAM1
-        bpf_dbg_printk("   reason=%u", gc.reason);
-        if (0 != bpf_map_update_elem(&ongoing_GC, &pid, &gc, BPF_NOEXIST)) {
-            bpf_dbg_printk("Couldn't update ongoing GC map");
-        }
-    }
+    u64 now = bpf_ktime_get_ns();
+    u8 go_reason_arg = (u8)(u64)ctx->ax; // TODO: Fix headers to allow pid.h and vmlinux to define ax vs. rax for GO_PARAM1
+    bpf_dbg_printk("== uprobe/runtime_startTheWorldWithSema reason=%u", go_reason_arg);
+    u16 gc_action = go_reason_to_gc_action(go_reason_arg);
+    record_gc_start(&ongoing_go_stw_gc, now, gc_action, GC_LANG_GO);
     return 0;
-}
-
-static inline void submit_gc_event(go_gc *gc, u64 world_start_time, u32 pid, u8 reason) {
-    http_request_trace *trace = bpf_ringbuf_reserve(&events, sizeof(http_request_trace), 0);
-    if (!trace) {
-        bpf_dbg_printk("can't reserve space in the ringbuffer");
-        return;
-    }
-    trace->type = EVENT_GO_GC;
-    trace->id = (u64)pid;
-    trace->status = reason_to_status(reason);
-    // Event is duration that GC stopped the world.
-    // So event _start_ time is world _stop_ time, event end is world start.
-    trace->start_monotime_ns = gc->world_stop_monotime_ns;
-    trace->end_monotime_ns = world_start_time;
-    bpf_ringbuf_submit(trace, get_flags());
 }
 
 SEC("uprobe/runtime_startTheWorldWithSema")
 int uprobe_runtime_start_the_world_with_sema(struct pt_regs *ctx) {
-    u64 world_start_time = bpf_ktime_get_ns();
-    u64 pid_tgid = bpf_get_current_pid_tgid();
-    bpf_dbg_printk("=== uprobe_runtime_start_the_world_with_sema === pid=%u, tgid=%u", pid_tgid >> 32, pid_tgid & 0xFFFFFFFF);
-    u32 pid = valid_pid(pid_tgid);
-    if (pid) {
-        go_gc *gc = bpf_map_lookup_elem(&ongoing_GC, &pid); 
-        if (gc != NULL) {
-            if (reason_is_GC(gc->reason)) {
-                submit_gc_event(gc, world_start_time, pid, gc->reason);
-            }
-            bpf_map_delete_elem(&ongoing_GC, &pid);
-        }
-    }
+    u64 now = bpf_ktime_get_ns();
+    bpf_dbg_printk("== uprobe/runtime_startTheWorldWithSema ==");
+    record_gc_end_event(&ongoing_go_stw_gc, now);
     return 0;
 }
 
 SEC("uprobe/runtime_gcBgMarkStartWorkers")
 int uprobe_runtime_gcBgMarkStartWorkers(struct pt_regs *ctx) {
-    bpf_dbg_printk("=== gcBgMarkStartWorkers ===");
-    // Start measurement
+    u64 now = bpf_ktime_get_ns();
+    bpf_dbg_printk("=== uprobe/runtime_gcBgMarkStartWorkers ===");
+    record_gc_start(&ongoing_go_gc, now, GC_MARK, GC_LANG_GO);
     return 0;
 }
 
 SEC("uprobe/runtime_freeStackSpans")
 int uprobe_runtime_freeStackSpans(struct pt_regs *ctx) {
-    bpf_dbg_printk("=== freeStackSpans ===");
-    // Finish measurement, submit
+    u64 now = bpf_ktime_get_ns();
+    bpf_dbg_printk("=== uprobe/runtime_freeStackSpans ===");
+    record_gc_end_event(&ongoing_go_gc, now);
     return 0;
 }
