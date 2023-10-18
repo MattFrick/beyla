@@ -16,10 +16,15 @@
 #include "bpf_dbg.h"
 #include "ringbuf.h"
 #include "http_trace.h"
+#include "gc.h"
 
 char __license[] SEC("license") = "Dual MIT/GPL";
 
 #define MAX_GO_PIDS  100
+
+#define GO_STW_GC_MARK_TERM     1
+#define GO_STW_GC_SWEEP_TERM    2
+
 typedef struct go_gc_t {
     u64 world_stop_monotime_ns;
     u8  reason;
@@ -32,11 +37,10 @@ struct {
     __uint(max_entries, MAX_GO_PIDS);
 } ongoing_GC SEC(".maps");
 
-
 static inline bool reason_is_GC(u8 reason) {
     switch (reason) {
-    case 1: // 	stwGCMarkTerm  // "GC mark termination"
-    case 2: // 	stwGCSweepTerm // "GC sweep termination"
+    case GO_STW_GC_MARK_TERM:
+    case GO_STW_GC_SWEEP_TERM:
         return true;
     default:
         // Some other stop the world reason that we're not instrumenting here.
@@ -45,19 +49,25 @@ static inline bool reason_is_GC(u8 reason) {
 }
 
 static inline u16 reason_to_status(u8 reason) {
-    // Currently we support reasons 1 and 2, convert to "is_sweep" boolean
-    u16 is_sweep = reason - 1;
-    return is_sweep;
+    switch (reason) {
+    case GO_STW_GC_MARK_TERM:  // End of mark phase
+        return (u16)GC_STW_MARK_TERM;
+    case GO_STW_GC_SWEEP_TERM: // Start of mark phase
+        return (u16)GC_STW_SWEEP_TERM;
+    default:
+        return (u16)GC_UNKNOWN;
+    }
 }
 
 SEC("uprobe/runtime_stopTheWorldWithSema")
 int uprobe_runtime_stop_the_world_with_sema(struct pt_regs *ctx) {
     go_gc gc = { .world_stop_monotime_ns = bpf_ktime_get_ns() };
     u64 pid_tgid = bpf_get_current_pid_tgid();
-    bpf_dbg_printk("=== uprobe_runtime_stop_the_world_with_sema pid=%u, gid=%u", pid_tgid >> 32, pid_tgid & 0xFFFFFFFF);
+    bpf_dbg_printk("=== uprobe_runtime_stop_the_world_with_sema pid=%u, tgid=%u", pid_tgid >> 32, pid_tgid & 0xFFFFFFFF);
     u32 pid = valid_pid(pid_tgid);
     if (pid) {
-        gc.reason = (u8)(u64)ctx->ax; // TODO: Fix headers to allow pid.h and vmlinux to define ax vs. rax
+        gc.reason = (u8)(u64)ctx->ax; // TODO: Fix headers to allow pid.h and vmlinux to define ax vs. rax for GO_PARAM1
+        bpf_dbg_printk("   reason=%u", gc.reason);
         if (0 != bpf_map_update_elem(&ongoing_GC, &pid, &gc, BPF_NOEXIST)) {
             bpf_dbg_printk("Couldn't update ongoing GC map");
         }
@@ -96,5 +106,19 @@ int uprobe_runtime_start_the_world_with_sema(struct pt_regs *ctx) {
             bpf_map_delete_elem(&ongoing_GC, &pid);
         }
     }
+    return 0;
+}
+
+SEC("uprobe/runtime_gcBgMarkStartWorkers")
+int uprobe_runtime_gcBgMarkStartWorkers(struct pt_regs *ctx) {
+    bpf_dbg_printk("=== gcBgMarkStartWorkers ===");
+    // Start measurement
+    return 0;
+}
+
+SEC("uprobe/runtime_freeStackSpans")
+int uprobe_runtime_freeStackSpans(struct pt_regs *ctx) {
+    bpf_dbg_printk("=== freeStackSpans ===");
+    // Finish measurement, submit
     return 0;
 }

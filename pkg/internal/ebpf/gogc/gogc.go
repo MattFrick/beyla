@@ -65,6 +65,12 @@ func (p *Tracer) GoProbes() map[string]ebpfcommon.FunctionPrograms {
 		"runtime.startTheWorldWithSema": {
 			End: p.bpfObjects.UprobeRuntimeStartTheWorldWithSema,
 		},
+		"runtime.gcBgMarkStartWorkers": {
+			Start: p.bpfObjects.UprobeRuntimeGcBgMarkStartWorkers,
+		},
+		"runtime.freeStackSpans": {
+			Start: p.bpfObjects.UprobeRuntimeFreeStackSpans,
+		},
 	}
 }
 
